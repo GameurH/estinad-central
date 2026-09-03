@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/fields";
 import { CardsSkeleton, Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/ui/states";
 import { Banknote, Receipt, ShoppingCart } from "lucide-react";
 import {
   downloadCsv,
@@ -44,10 +45,12 @@ export default function ReportsPage() {
     { method: PaymentMethod; paymentCount: number; totalAmount: number }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     if (!current) return;
     setLoading(true);
+    setFailed(false);
     Promise.all([
       getDailySales(current.id, Number(range)),
       getPaymentBreakdown(current.id),
@@ -56,8 +59,11 @@ export default function ReportsPage() {
         setDaily(d);
         setPayments(p);
       })
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
-  }, [current, range]);
+  };
+
+  useEffect(load, [current, range]);
 
   const totals = useMemo(() => {
     const revenue = daily.reduce((s, d) => s + d.completedRevenue, 0);
@@ -138,6 +144,10 @@ export default function ReportsPage() {
           <CardsSkeleton count={3} />
           <Skeleton className="h-64 w-full" />
         </>
+      ) : failed ? (
+        <Card>
+          <ErrorState title={t("error_title")} onRetry={load} retryLabel={t("retry")} />
+        </Card>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

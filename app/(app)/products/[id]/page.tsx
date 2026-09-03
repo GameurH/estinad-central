@@ -81,12 +81,13 @@ export default function EditProductPage({
           />
         </Card>
       )}
-      {status === "ready" && product && (
+      {status === "ready" && product && current && (
         <ProductForm
           initial={draftFromProduct(product)}
           categories={categories}
           variants={product.variants}
           productId={product.id}
+          tenantId={current.id}
           mode="edit"
         />
       )}

@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/fields";
 import { TableSkeleton } from "@/components/ui/skeleton";
-import { EmptyState, NoResultsState } from "@/components/ui/states";
+import { EmptyState, ErrorState, NoResultsState } from "@/components/ui/states";
 import {
   getCategories,
   getProductName,
@@ -37,22 +37,26 @@ export default function ProductsPage() {
   const [items, setItems] = useState<ProductListItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const [avail, setAvail] = useState("all");
   const [page, setPage] = useState(0);
 
-  useEffect(() => {
+  const load = () => {
     if (!current) return;
     setLoading(true);
-    Promise.all([getProducts(current.id), getCategories(current.id)]).then(
-      ([p, c]) => {
+    setFailed(false);
+    Promise.all([getProducts(current.id), getCategories(current.id)])
+      .then(([p, c]) => {
         setItems(p);
         setCategories(c);
-        setLoading(false);
-      },
-    );
-  }, [current]);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [current]);
 
   useEffect(() => setPage(0), [query, categoryId, avail]);
 
@@ -177,6 +181,10 @@ export default function ProductsPage() {
 
       {loading ? (
         <TableSkeleton rows={8} cols={5} />
+      ) : failed ? (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
+          <ErrorState title={t("error_title")} onRetry={load} retryLabel={t("retry")} />
+        </div>
       ) : items.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
           <EmptyState

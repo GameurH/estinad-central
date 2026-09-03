@@ -21,8 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/fields";
 import { TableSkeleton } from "@/components/ui/skeleton";
-import { EmptyState, NoResultsState } from "@/components/ui/states";
-import { downloadCsv, getOnlineOrders, toCsv } from "@/lib/services";
+import { EmptyState, ErrorState, NoResultsState } from "@/components/ui/states";
+import { downloadCsv, getOnlineOrders, toCsv, updateOnlineOrder } from "@/lib/services";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import type { OnlineOrder, ShippingStatus } from "@/lib/domain";
 
@@ -50,17 +50,23 @@ export default function OnlineOrdersPage() {
   const { toast } = useToast();
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
   const [shipping, setShipping] = useState("all");
   const [selected, setSelected] = useState<OnlineOrder | null>(null);
   const [tracking, setTracking] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     if (!current) return;
+    setLoading(true);
+    setFailed(false);
     getOnlineOrders(current.id)
       .then(setOrders)
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
-  }, [current]);
+  };
+
+  useEffect(load, [current]);
 
   useEffect(() => {
     setTracking(selected?.trackingNumber ?? "");
@@ -81,29 +87,21 @@ export default function OnlineOrdersPage() {
     });
   }, [orders, query, shipping]);
 
-  const updateStatus = (status: ShippingStatus) => {
+  const updateStatus = async (status: ShippingStatus) => {
     if (!selected) return;
-    setOrders((list) =>
-      list.map((o) =>
-        o.id === selected.id
-          ? {
-              ...o,
-              shippingStatus: status,
-              trackingNumber: tracking.trim() || o.trackingNumber,
-            }
-          : o,
-      ),
-    );
-    setSelected((s) =>
-      s
-        ? {
-            ...s,
-            shippingStatus: status,
-            trackingNumber: tracking.trim() || s.trackingNumber,
-          }
-        : s,
-    );
-    toast(t("saved"));
+    const nextTracking = tracking.trim() || selected.trackingNumber;
+    try {
+      await updateOnlineOrder(selected.id, {
+        shippingStatus: status,
+        trackingNumber: nextTracking,
+      });
+      const patch = { shippingStatus: status, trackingNumber: nextTracking };
+      setOrders((list) => list.map((o) => (o.id === selected.id ? { ...o, ...patch } : o)));
+      setSelected((s) => (s ? { ...s, ...patch } : s));
+      toast(t("saved"));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    }
   };
 
   const columns: Column<OnlineOrder>[] = [
@@ -217,6 +215,10 @@ export default function OnlineOrdersPage() {
 
       {loading ? (
         <TableSkeleton rows={6} cols={5} />
+      ) : failed ? (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
+          <ErrorState title={t("error_title")} onRetry={load} retryLabel={t("retry")} />
+        </div>
       ) : orders.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
           <EmptyState

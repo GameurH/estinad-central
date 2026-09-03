@@ -23,6 +23,7 @@ export interface Tenant {
   trialEndsAt: string | null;
   storefrontEnabled: boolean;
   storefrontSlug: string | null;
+  storefrontDescription: string | null;
   onlineOrderingEnabled: boolean;
   deliveryEnabled: boolean;
   pickupEnabled: boolean;

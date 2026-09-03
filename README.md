@@ -48,20 +48,20 @@ components/
   providers/  theme, language (fr/ar/en + RTL), tenant, toast
 lib/
   domain.ts     typed models (mirrors the ESTINAD Core contract)
-  services.ts   THE backend boundary — async functions, stable signatures
-  demo-data.ts  realistic Algerian-restaurant dataset (feeds services today)
+  services.ts   THE backend boundary — Supabase reads/writes (project `rms`), stable signatures
   format.ts     DZD + date formatting
   auth-gate.ts  console-access gate (demo: any authenticated user; prod: tenant_owners check)
-  supabase/     browser + server clients (auth/session only, as in control)
+  supabase/     browser + server + cached client (auth/session only, as in control)
 proxy.ts        Supabase cookie refresh + session gate (steps aside without env)
 .env.example    Supabase URL/anon key + Google redirect notes
 ```
 
-**Backend integration:** reimplement the functions in `lib/services.ts`
-against Supabase / ESTINAD Core and keep every signature identical — no UI
-changes required. Auth (login/register/reset), tenant persistence, and
-mutations are stubbed with demo behavior until then; see `lib/services.ts`
-header.
+**Backend:** `lib/services.ts` queries Supabase (project `rms`) through the
+RLS-enforced browser client — catalog, orders, fulfillment updates, settings,
+reporting views (`v_daily_sales`, `v_hourly_sales`, `v_payment_breakdown`,
+`v_product_performance`), and trilingual content tables. Tenants resolve from
+`tenant_owners` for the signed-in user; fulfillment writes are covered by the
+tenant-scoped `online_orders` UPDATE policy. No demo dataset remains.
 
 **Google sign-in** (same flow as `control/`): the login page offers
 "Continue with Google" → Supabase `signInWithOAuth` → `/auth/callback`

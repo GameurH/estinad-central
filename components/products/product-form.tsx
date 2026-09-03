@@ -10,7 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { useLanguage } from "@/components/providers/language-provider";
 import { useToast } from "@/components/providers/toast-provider";
-import { getVariantName } from "@/lib/services";
+import {
+  createProduct,
+  createVariant,
+  deleteProduct,
+  deleteVariant,
+  getVariantName,
+  updateProduct,
+} from "@/lib/services";
 import { formatCurrency } from "@/lib/format";
 import type { Category, PrinterDest, Product, ProductType, Variant } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -66,12 +73,14 @@ export function ProductForm({
   categories,
   variants,
   productId,
+  tenantId,
   mode,
 }: {
   initial: ProductDraft;
   categories: Category[];
   variants: Variant[];
   productId?: string;
+  tenantId: string;
   mode: "create" | "edit";
 }) {
   const router = useRouter();
@@ -104,39 +113,113 @@ export function ProductForm({
   const valid = draft.name.trim().length >= 2 && draft.price >= 0;
   const margin = marginPct(draft.price, draft.costPrice);
 
-  const save = () => {
-    if (!valid) return;
+  const save = async () => {
+    if (!valid || saving) return;
     setSaving(true);
-    window.setTimeout(() => {
+    try {
+      if (mode === "create") {
+        const id = await createProduct({
+          tenantId,
+          name: draft.name,
+          type: draft.type,
+          price: draft.price,
+          costPrice: draft.costPrice,
+          categoryId: draft.categoryId,
+          sku: draft.sku || null,
+          barcode: draft.barcode || null,
+          isAvailable: draft.isAvailable,
+          printerDest: draft.printerDest,
+          shortDescription: draft.shortDescription || null,
+        });
+        for (const v of localVariants) {
+          await createVariant({
+            tenantId,
+            productId: id,
+            name: v.name,
+            priceMod: v.priceMod,
+          });
+        }
+        toast(t("product_created"));
+        router.push(`/products/${id}`);
+      } else if (productId) {
+        await updateProduct(productId, {
+          name: draft.name,
+          type: draft.type,
+          price: draft.price,
+          costPrice: draft.costPrice,
+          categoryId: draft.categoryId,
+          sku: draft.sku || null,
+          barcode: draft.barcode || null,
+          isAvailable: draft.isAvailable,
+          printerDest: draft.printerDest,
+          shortDescription: draft.shortDescription || null,
+        });
+        toast(t("product_saved"));
+        router.push("/products");
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    } finally {
       setSaving(false);
-      toast(mode === "create" ? t("product_created") : t("product_saved"));
-      router.push(mode === "create" ? `/products/${productId ?? "p-chorba"}` : "/products");
-    }, 450);
+    }
   };
 
-  const remove = () => {
+  const remove = async () => {
+    if (!productId) return;
     setConfirmDelete(false);
-    toast(t("product_deleted"));
-    router.push("/products");
+    try {
+      await deleteProduct(productId);
+      toast(t("product_deleted"));
+      router.push("/products");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    }
   };
 
-  const addVariant = () => {
+  const addVariant = async () => {
     const name = variantName.trim();
     if (!name) return;
-    setLocalVariants((list) => [
-      ...list,
-      {
-        id: `v-local-${Date.now()}`,
-        tenantId: "",
-        productId: productId ?? "",
-        name,
-        priceMod: Number(variantMod) || 0,
-        sku: null,
-        barcode: null,
-      },
-    ]);
-    setVariantName("");
-    setVariantMod("0");
+    const mod = Number(variantMod) || 0;
+    // Create mode: stage locally until the product exists.
+    if (mode === "create" || !productId) {
+      setLocalVariants((list) => [
+        ...list,
+        {
+          id: `v-local-${Date.now()}`,
+          tenantId,
+          productId: productId ?? "",
+          name,
+          priceMod: mod,
+          sku: null,
+          barcode: null,
+        },
+      ]);
+      setVariantName("");
+      setVariantMod("0");
+      return;
+    }
+    try {
+      const created = await createVariant({ tenantId, productId, name, priceMod: mod });
+      setLocalVariants((list) => [...list, created]);
+      setVariantName("");
+      setVariantMod("0");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    }
+  };
+
+  const removeVariant = async (id: string) => {
+    const isLocal = id.startsWith("v-local-");
+    if (isLocal || mode === "create" || !productId) {
+      setLocalVariants((l) => l.filter((x) => x.id !== id));
+      return;
+    }
+    try {
+      await deleteVariant(id);
+      setLocalVariants((l) => l.filter((x) => x.id !== id));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    }
   };
 
   const tabs = [
@@ -327,7 +410,7 @@ export function ProductForm({
                 </span>
                 <Badge>→ {formatCurrency(draft.price + v.priceMod)}</Badge>
                 <button
-                  onClick={() => setLocalVariants((l) => l.filter((x) => x.id !== v.id))}
+                  onClick={() => removeVariant(v.id)}
                   aria-label={`${t("delete")} ${v.name}`}
                   className="cursor-pointer rounded-[var(--radius-sm)] p-1.5 text-text-muted hover:bg-danger-muted hover:text-danger"
                 >

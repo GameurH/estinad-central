@@ -11,11 +11,14 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/fields";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState } from "@/components/ui/states";
+import { EmptyState, ErrorState } from "@/components/ui/states";
 import {
+  createCategory,
+  deleteCategory,
   getCategories,
   getCategoryName,
   missingTranslationLangs,
+  updateCategory,
 } from "@/lib/services";
 import type { Category, CategoryType } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -50,6 +53,7 @@ export default function CategoriesPage() {
   const { toast } = useToast();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [editor, setEditor] = useState<null | {
     id?: string;
@@ -59,12 +63,17 @@ export default function CategoriesPage() {
   }>(null);
   const [deleting, setDeleting] = useState<Category | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     if (!current) return;
+    setLoading(true);
+    setFailed(false);
     getCategories(current.id)
       .then(setCategories)
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
-  }, [current]);
+  };
+
+  useEffect(load, [current]);
 
   const tree = useMemo(() => buildTree(categories), [categories]);
 
@@ -76,47 +85,47 @@ export default function CategoriesPage() {
       return next;
     });
 
-  const saveEditor = () => {
-    if (!editor || editor.name.trim().length < 2) return;
-    if (editor.id) {
-      setCategories((list) =>
-        list.map((c) =>
-          c.id === editor.id
-            ? { ...c, name: editor.name.trim(), type: editor.type, parentId: editor.parentId }
-            : c,
-        ),
-      );
-    } else {
-      setCategories((list) => [
-        ...list,
-        {
-          id: `c-local-${Date.now()}`,
-          tenantId: current?.id ?? "",
-          name: editor.name.trim(),
+  const saveEditor = async () => {
+    if (!editor || !current || editor.name.trim().length < 2) return;
+    try {
+      if (editor.id) {
+        await updateCategory(editor.id, {
+          name: editor.name,
           type: editor.type,
           parentId: editor.parentId,
-          productCount: 0,
-        },
-      ]);
+        });
+      } else {
+        await createCategory({
+          tenantId: current.id,
+          name: editor.name,
+          type: editor.type,
+          parentId: editor.parentId,
+        });
+      }
+      setEditor(null);
+      toast(t("saved"));
+      load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
     }
-    setEditor(null);
-    toast(t("saved"));
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleting) return;
     if (deleting.productCount > 0) {
       toast(`${deleting.productCount} ${t("products_count")}`, "error");
       setDeleting(null);
       return;
     }
-    setCategories((list) =>
-      list
-        .filter((c) => c.id !== deleting.id)
-        .map((c) => (c.parentId === deleting.id ? { ...c, parentId: null } : c)),
-    );
-    setDeleting(null);
-    toast(t("product_deleted"));
+    try {
+      await deleteCategory(deleting.id);
+      setDeleting(null);
+      toast(t("product_deleted"));
+      load();
+    } catch (e) {
+      setDeleting(null);
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    }
   };
 
   const renderNode = (node: Node, depth: number) => {
@@ -212,6 +221,10 @@ export default function CategoriesPage() {
 
       {loading ? (
         <Skeleton className="h-72 w-full" />
+      ) : failed ? (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
+          <ErrorState title={t("error_title")} onRetry={load} retryLabel={t("retry")} />
+        </div>
       ) : categories.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
           <EmptyState

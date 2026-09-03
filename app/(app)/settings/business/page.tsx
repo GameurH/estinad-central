@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Field, Input, Switch, Textarea } from "@/components/ui/fields";
 import { Skeleton } from "@/components/ui/skeleton";
+import { updateTenantSettings } from "@/lib/services";
 import { cn } from "@/lib/utils";
 
 type Tab = "general" | "ordering" | "storefront" | "branding" | "location";
@@ -90,7 +91,7 @@ export default function BusinessSettingsPage() {
       prepTime: current.estimatedPrepTime,
       storefrontEnabled: current.storefrontEnabled,
       storefrontSlug: current.storefrontSlug ?? "",
-      storefrontDescription: "",
+      storefrontDescription: current.storefrontDescription ?? "",
       tagline: current.brand.tagline.fr,
       siteTitle: current.brand.siteTitle.fr,
       metaDescription: current.brand.metaDescription.fr,
@@ -118,13 +119,18 @@ export default function BusinessSettingsPage() {
   const set = <K extends keyof BusinessDraft>(key: K, value: BusinessDraft[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 
-  const save = () => {
+  const save = async () => {
+    if (!current) return;
     setSaving(true);
-    window.setTimeout(() => {
-      setSaving(false);
+    try {
+      await updateTenantSettings(current.id, draft);
       setInitial(draft);
       toast(t("saved"));
-    }, 450);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const tabs: { id: Tab; label: string }[] = [

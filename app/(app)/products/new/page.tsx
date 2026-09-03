@@ -55,14 +55,15 @@ export default function NewProductPage() {
             retryLabel={t("retry")}
           />
         </Card>
-      ) : (
+      ) : current ? (
         <ProductForm
           initial={{ ...EMPTY_DRAFT, categoryId: categories[0]?.id ?? null }}
           categories={categories}
           variants={[]}
+          tenantId={current.id}
           mode="create"
         />
-      )}
+      ) : null}
     </div>
   );
 }

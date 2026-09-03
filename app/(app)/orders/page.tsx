@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input, Select } from "@/components/ui/fields";
 import { TableSkeleton } from "@/components/ui/skeleton";
-import { EmptyState, NoResultsState } from "@/components/ui/states";
+import { EmptyState, ErrorState, NoResultsState } from "@/components/ui/states";
 import { downloadCsv, getOrders, toCsv } from "@/lib/services";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import type { Order, OrderStatus } from "@/lib/domain";
@@ -50,17 +50,23 @@ export default function OrdersPage() {
   const { t } = useLanguage();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [selected, setSelected] = useState<Order | null>(null);
   const [page, setPage] = useState(0);
 
-  useEffect(() => {
+  const load = () => {
     if (!current) return;
+    setLoading(true);
+    setFailed(false);
     getOrders(current.id)
       .then(setOrders)
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
-  }, [current]);
+  };
+
+  useEffect(load, [current]);
 
   useEffect(() => setPage(0), [query, status]);
 
@@ -174,6 +180,10 @@ export default function OrdersPage() {
 
       {loading ? (
         <TableSkeleton rows={8} cols={5} />
+      ) : failed ? (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
+          <ErrorState title={t("error_title")} onRetry={load} retryLabel={t("retry")} />
+        </div>
       ) : orders.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
           <EmptyState title={t("empty_orders")} hint={t("empty_orders_hint")} />
