@@ -8,7 +8,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/fields";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/dialog";
-import { useLanguage } from "@/components/providers/language-provider";
+import { MarkdownEditor } from "@/components/ui/markdown-editor";
+import { LANGUAGES, useLanguage } from "@/components/providers/language-provider";
 import { useToast } from "@/components/providers/toast-provider";
 import {
   createProduct,
@@ -16,10 +17,19 @@ import {
   deleteProduct,
   deleteVariant,
   getVariantName,
+  saveProductLongDescriptions,
   updateProduct,
 } from "@/lib/services";
 import { formatCurrency } from "@/lib/format";
-import type { Category, PrinterDest, Product, ProductType, Variant } from "@/lib/domain";
+import type {
+  Category,
+  LangCode,
+  PrinterDest,
+  Product,
+  ProductTranslation,
+  ProductType,
+  Variant,
+} from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
 export interface ProductDraft {
@@ -33,9 +43,17 @@ export interface ProductDraft {
   isAvailable: boolean;
   printerDest: PrinterDest;
   shortDescription: string;
+  /** Base (French) long copy → `products.long_description`. */
+  longDescription: string;
+  longDescriptionAr: string;
+  longDescriptionEn: string;
 }
 
-export function draftFromProduct(p: Product): ProductDraft {
+export function draftFromProduct(
+  p: Product,
+  translations: ProductTranslation[] = [],
+): ProductDraft {
+  const byLang = new Map(translations.map((t) => [t.languageCode, t]));
   return {
     name: p.name,
     type: p.type,
@@ -47,6 +65,9 @@ export function draftFromProduct(p: Product): ProductDraft {
     isAvailable: p.isAvailable,
     printerDest: p.printerDest,
     shortDescription: p.shortDescription ?? "",
+    longDescription: p.longDescription ?? "",
+    longDescriptionAr: byLang.get("ar")?.longDescription ?? "",
+    longDescriptionEn: byLang.get("en")?.longDescription ?? "",
   };
 }
 
@@ -61,6 +82,9 @@ export const EMPTY_DRAFT: ProductDraft = {
   isAvailable: true,
   printerDest: "kitchen",
   shortDescription: "",
+  longDescription: "",
+  longDescriptionAr: "",
+  longDescriptionEn: "",
 };
 
 function marginPct(price: number, cost: number | null): number | null {
@@ -93,6 +117,7 @@ export function ProductForm({
   const [localVariants, setLocalVariants] = useState<Variant[]>(variants);
   const [variantName, setVariantName] = useState("");
   const [variantMod, setVariantMod] = useState("0");
+  const [descLang, setDescLang] = useState<LangCode>("fr");
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(initial),
@@ -110,6 +135,19 @@ export function ProductForm({
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
 
+  const longDescriptionValue =
+    descLang === "ar"
+      ? draft.longDescriptionAr
+      : descLang === "en"
+        ? draft.longDescriptionEn
+        : draft.longDescription;
+
+  const setLongDescription = (value: string) => {
+    if (descLang === "ar") set("longDescriptionAr", value);
+    else if (descLang === "en") set("longDescriptionEn", value);
+    else set("longDescription", value);
+  };
+
   const valid = draft.name.trim().length >= 2 && draft.price >= 0;
   const margin = marginPct(draft.price, draft.costPrice);
 
@@ -117,6 +155,12 @@ export function ProductForm({
     if (!valid || saving) return;
     setSaving(true);
     try {
+      const longDescriptions = [
+        { languageCode: "fr" as const, longDescription: draft.longDescription || null },
+        { languageCode: "ar" as const, longDescription: draft.longDescriptionAr || null },
+        { languageCode: "en" as const, longDescription: draft.longDescriptionEn || null },
+      ];
+
       if (mode === "create") {
         const id = await createProduct({
           tenantId,
@@ -130,6 +174,7 @@ export function ProductForm({
           isAvailable: draft.isAvailable,
           printerDest: draft.printerDest,
           shortDescription: draft.shortDescription || null,
+          longDescription: draft.longDescription || null,
         });
         for (const v of localVariants) {
           await createVariant({
@@ -139,6 +184,7 @@ export function ProductForm({
             priceMod: v.priceMod,
           });
         }
+        await saveProductLongDescriptions(id, draft.name, longDescriptions);
         toast(t("product_created"));
         router.push(`/products/${id}`);
       } else if (productId) {
@@ -153,7 +199,9 @@ export function ProductForm({
           isAvailable: draft.isAvailable,
           printerDest: draft.printerDest,
           shortDescription: draft.shortDescription || null,
+          longDescription: draft.longDescription || null,
         });
+        await saveProductLongDescriptions(productId, draft.name, longDescriptions);
         toast(t("product_saved"));
         router.push("/products");
       }
@@ -253,81 +301,124 @@ export function ProductForm({
 
       {tab === "details" && (
         <div className="animate-fade-in grid grid-cols-1 gap-3 xl:grid-cols-3">
-          <Card className="xl:col-span-2">
-            <CardHeader title={t("details")} />
-            <div className="space-y-4 p-4">
-              <Field label={t("name")}>
-                <Input
-                  value={draft.name}
-                  onChange={(e) => set("name", e.target.value)}
-                  placeholder="Couscous royal"
-                  autoFocus={mode === "create"}
-                />
-              </Field>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label={t("category")}>
-                  <Select
-                    value={draft.categoryId ?? ""}
-                    onChange={(e) => set("categoryId", e.target.value || null)}
-                  >
-                    <option value="">{t("none")}</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label={t("type")}>
-                  <Select
-                    value={draft.type}
-                    onChange={(e) => set("type", e.target.value as ProductType)}
-                  >
-                    <option value="simple">{t("simple")}</option>
-                    <option value="variable">{t("variable")}</option>
-                    <option value="composite">{t("composite")}</option>
-                  </Select>
-                </Field>
-              </div>
-              <Field label={t("description")}>
-                <Textarea
-                  value={draft.shortDescription}
-                  onChange={(e) => set("shortDescription", e.target.value)}
-                  placeholder="Description courte…"
-                />
-              </Field>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label={t("sku")}>
+          <div className="space-y-3 xl:col-span-2">
+            <Card>
+              <CardHeader title={t("details")} />
+              <div className="space-y-4 p-4">
+                <Field label={t("name")}>
                   <Input
-                    value={draft.sku}
-                    onChange={(e) => set("sku", e.target.value)}
-                    className="font-mono"
+                    value={draft.name}
+                    onChange={(e) => set("name", e.target.value)}
+                    placeholder="Couscous royal"
+                    autoFocus={mode === "create"}
                   />
                 </Field>
-                <Field label={t("barcode")}>
-                  <Input
-                    value={draft.barcode}
-                    onChange={(e) => set("barcode", e.target.value)}
-                    className="font-mono"
-                    inputMode="numeric"
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label={t("category")}>
+                    <Select
+                      value={draft.categoryId ?? ""}
+                      onChange={(e) => set("categoryId", e.target.value || null)}
+                    >
+                      <option value="">{t("none")}</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label={t("type")}>
+                    <Select
+                      value={draft.type}
+                      onChange={(e) => set("type", e.target.value as ProductType)}
+                    >
+                      <option value="simple">{t("simple")}</option>
+                      <option value="variable">{t("variable")}</option>
+                      <option value="composite">{t("composite")}</option>
+                    </Select>
+                  </Field>
+                </div>
+                <Field label={t("description")}>
+                  <Textarea
+                    value={draft.shortDescription}
+                    onChange={(e) => set("shortDescription", e.target.value)}
+                    placeholder="Description courte…"
                   />
                 </Field>
-                <Field label={t("printer")}>
-                  <Select
-                    value={draft.printerDest ?? ""}
-                    onChange={(e) =>
-                      set("printerDest", (e.target.value || null) as PrinterDest)
-                    }
-                  >
-                    <option value="">{t("none")}</option>
-                    <option value="kitchen">{t("kitchen")}</option>
-                    <option value="bar">{t("bar")}</option>
-                    <option value="oven">{t("oven")}</option>
-                  </Select>
-                </Field>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <Field label={t("sku")}>
+                    <Input
+                      value={draft.sku}
+                      onChange={(e) => set("sku", e.target.value)}
+                      className="font-mono"
+                    />
+                  </Field>
+                  <Field label={t("barcode")}>
+                    <Input
+                      value={draft.barcode}
+                      onChange={(e) => set("barcode", e.target.value)}
+                      className="font-mono"
+                      inputMode="numeric"
+                    />
+                  </Field>
+                  <Field label={t("printer")}>
+                    <Select
+                      value={draft.printerDest ?? ""}
+                      onChange={(e) =>
+                        set("printerDest", (e.target.value || null) as PrinterDest)
+                      }
+                    >
+                      <option value="">{t("none")}</option>
+                      <option value="kitchen">{t("kitchen")}</option>
+                      <option value="bar">{t("bar")}</option>
+                      <option value="oven">{t("oven")}</option>
+                    </Select>
+                  </Field>
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title={t("long_description")}
+                subtitle={t("long_description_hint")}
+              />
+              <div className="flex gap-1 border-b border-border px-4">
+                {LANGUAGES.map((l) => (
+                  <button
+                    key={l.code}
+                    type="button"
+                    role="tab"
+                    aria-selected={descLang === l.code}
+                    onClick={() => setDescLang(l.code)}
+                    className={cn(
+                      "relative cursor-pointer px-3 py-2 text-[13px] font-medium transition-colors",
+                      descLang === l.code
+                        ? "text-text-primary"
+                        : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {l.nativeName}
+                    {descLang === l.code && (
+                      <span
+                        aria-hidden
+                        className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary"
+                      />
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="p-4">
+                <MarkdownEditor
+                  value={longDescriptionValue}
+                  onChange={setLongDescription}
+                  dir={descLang === "ar" ? "rtl" : "ltr"}
+                  ariaLabel={t("long_description")}
+                  placeholder={t("long_description_hint")}
+                />
+              </div>
+            </Card>
+          </div>
 
           <div className="space-y-3">
             <Card>

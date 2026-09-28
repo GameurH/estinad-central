@@ -74,6 +74,8 @@ export interface Product {
   images: string[];
   printerDest: PrinterDest;
   shortDescription: string | null;
+  /** Storefront long copy. Markdown-formatted plain text; shown on the online product page. */
+  longDescription: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -83,6 +85,7 @@ export interface ProductTranslation {
   languageCode: LangCode;
   name: string;
   shortDescription: string | null;
+  longDescription: string | null;
 }
 
 export interface Variant {

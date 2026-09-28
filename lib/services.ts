@@ -32,6 +32,7 @@ import type {
   PaymentStatus,
   Product,
   ProductPerformance,
+  ProductTranslation,
   ShippingStatus,
   Tenant,
   TenantStatus,
@@ -127,6 +128,14 @@ function asPaymentStatus(v: unknown): PaymentStatus {
 }
 
 /* ---------- Translation cache (keeps name helpers synchronous) ---------- */
+
+const LANG_CODES: LangCode[] = ["fr", "ar", "en"];
+
+/** Normalises live `language_code` values (fr, ar, en, fra, ara, eng, ar-SA…). */
+function asLangCode(v: unknown): LangCode | null {
+  const code = str(v).toLowerCase().slice(0, 2);
+  return LANG_CODES.includes(code as LangCode) ? (code as LangCode) : null;
+}
 
 interface TrEntry {
   name: string;
@@ -313,6 +322,7 @@ function mapProduct(r: Row): Product {
     images,
     printerDest,
     shortDescription: strOrNull(r.short_description),
+    longDescription: strOrNull(r.long_description),
     createdAt: str(r.created_at),
     updatedAt: str(r.updated_at),
   };
@@ -367,7 +377,9 @@ export async function getProducts(tenantId: string): Promise<ProductListItem[]> 
 export async function getProduct(
   tenantId: string,
   id: string,
-): Promise<(Product & { variants: Variant[] }) | null> {
+): Promise<
+  (Product & { variants: Variant[]; translations: ProductTranslation[] }) | null
+> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("products")
@@ -381,15 +393,29 @@ export async function getProduct(
 
   const [{ data: vData, error: vErr }, { data: tData, error: tErr }] = await Promise.all([
     sb.from("variants").select("*").eq("product_id", id).order("name"),
-    sb.from("product_translations").select("language_code,name,short_description").eq("product_id", id),
+    sb
+      .from("product_translations")
+      .select("language_code,name,short_description,long_description")
+      .eq("product_id", id),
   ]);
   if (vErr) fail("load variants", vErr);
   if (tErr) fail("load product translations", tErr);
 
   const product = mapProduct(row);
   seedBase("product", product.id, product.name, product.shortDescription);
+
+  const translations: ProductTranslation[] = [];
   for (const t of rowsOf(tData)) {
-    putTr("product", product.id, str(t.language_code), str(t.name), strOrNull(t.short_description));
+    const languageCode = asLangCode(t.language_code);
+    if (!languageCode) continue;
+    putTr("product", product.id, languageCode, str(t.name), strOrNull(t.short_description));
+    translations.push({
+      productId: product.id,
+      languageCode,
+      name: str(t.name),
+      shortDescription: strOrNull(t.short_description),
+      longDescription: strOrNull(t.long_description),
+    });
   }
 
   const variants = rowsOf(vData).map(mapVariant);
@@ -406,7 +432,7 @@ export async function getProduct(
     }
   }
 
-  return { ...product, variants };
+  return { ...product, variants, translations };
 }
 
 function mapVariant(r: Row): Variant {
@@ -533,6 +559,7 @@ export interface ProductInput {
   isAvailable: boolean;
   printerDest: Product["printerDest"];
   shortDescription: string | null;
+  longDescription: string | null;
 }
 
 export async function createProduct(input: ProductInput): Promise<string> {
@@ -552,6 +579,7 @@ export async function createProduct(input: ProductInput): Promise<string> {
       is_available: input.isAvailable,
       printer_dest: input.printerDest,
       short_description: input.shortDescription?.trim() || null,
+      long_description: input.longDescription?.trim() || null,
     })
     .select("id")
     .single();
@@ -576,8 +604,60 @@ export async function updateProduct(
   if (patch.printerDest !== undefined) row.printer_dest = patch.printerDest;
   if (patch.shortDescription !== undefined)
     row.short_description = patch.shortDescription?.trim() || null;
+  if (patch.longDescription !== undefined)
+    row.long_description = patch.longDescription?.trim() || null;
   const { error } = await sb.from("products").update(row).eq("id", id);
   if (error) fail("update product", error);
+}
+
+/**
+ * Persists per-language storefront long descriptions in `product_translations`.
+ *
+ * Only `long_description` is written: `name`/`short_description` are owned by
+ * the POS sync and must not be clobbered. Rows are created on demand (with the
+ * base product name, which the storefront already falls back to) and existing
+ * rows are updated in place. Clearing a description sets it back to NULL and
+ * never orphans an empty row.
+ */
+export async function saveProductLongDescriptions(
+  productId: string,
+  baseName: string,
+  entries: { languageCode: LangCode; longDescription: string | null }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("product_translations")
+    .select("language_code")
+    .eq("product_id", productId);
+  if (error) fail("load product translations", error);
+  const existing = new Map<LangCode, string>();
+  for (const r of rowsOf(data)) {
+    const code = asLangCode(r.language_code);
+    const raw = str(r.language_code);
+    if (code && raw) existing.set(code, raw);
+  }
+
+  for (const entry of entries) {
+    const value = entry.longDescription?.trim() || null;
+    const rawLanguage = existing.get(entry.languageCode);
+    if (rawLanguage) {
+      const { error: upErr } = await sb
+        .from("product_translations")
+        .update({ long_description: value })
+        .eq("product_id", productId)
+        .eq("language_code", rawLanguage);
+      if (upErr) fail("save product description", upErr);
+    } else if (value) {
+      const { error: inErr } = await sb.from("product_translations").insert({
+        product_id: productId,
+        language_code: entry.languageCode,
+        name: baseName.trim() || "—",
+        long_description: value,
+      });
+      if (inErr) fail("save product description", inErr);
+    }
+  }
 }
 
 export async function deleteProduct(id: string): Promise<void> {

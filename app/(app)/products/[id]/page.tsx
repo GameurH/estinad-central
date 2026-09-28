@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { draftFromProduct, ProductForm } from "@/components/products/product-form";
 import { getCategories, getProduct } from "@/lib/services";
-import type { Category, Product, Variant } from "@/lib/domain";
+import type { Category, Product, ProductTranslation, Variant } from "@/lib/domain";
 
 export default function EditProductPage({
   params,
@@ -23,7 +23,9 @@ export default function EditProductPage({
   const router = useRouter();
   const { current } = useTenant();
   const { t } = useLanguage();
-  const [product, setProduct] = useState<(Product & { variants: Variant[] }) | null>(null);
+  const [product, setProduct] = useState<
+    (Product & { variants: Variant[]; translations: ProductTranslation[] }) | null
+  >(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [status, setStatus] = useState<"loading" | "error" | "missing" | "ready">("loading");
 
@@ -83,7 +85,7 @@ export default function EditProductPage({
       )}
       {status === "ready" && product && current && (
         <ProductForm
-          initial={draftFromProduct(product)}
+          initial={draftFromProduct(product, product.translations)}
           categories={categories}
           variants={product.variants}
           productId={product.id}
