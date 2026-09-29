@@ -1144,6 +1144,53 @@ export async function uploadTenantImage(input: {
   };
 }
 
+/** Public prefix of our own bucket — lets us tell our URLs from foreign ones. */
+function mediaPublicPrefix(): string {
+  return `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/${MEDIA_BUCKET}/`;
+}
+
+/**
+ * Mirrors the gallery into `products.images`.
+ *
+ * The storefront renders `product_media` first and then *falls back* to
+ * `products.images`, and other consumers read that array too. Without this,
+ * removing a photo deletes the object while the legacy array keeps pointing at
+ * it — a broken image on the product page.
+ *
+ * Only URLs inside our own bucket are rewritten: entries pointing at another
+ * host are preserved untouched. `products.image` is deliberately left alone —
+ * the POS sync writes a bare filename there for some products.
+ */
+async function syncProductImageMirror(productId: string): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("products")
+    .select("images")
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) fail("load product images", error);
+
+  const row = oneOf(data);
+  const current = Array.isArray(row?.images)
+    ? (row.images as unknown[]).filter((u): u is string => typeof u === "string")
+    : [];
+
+  const prefix = mediaPublicPrefix();
+  const foreign = current.filter((url) => !url.startsWith(prefix));
+  const gallery = (await getProductMedia(productId)).map((m) => m.url);
+  const images = Array.from(new Set([...gallery, ...foreign]));
+
+  const unchanged =
+    images.length === current.length && images.every((url, i) => url === current[i]);
+  if (unchanged) return;
+
+  const { error: writeError } = await sb
+    .from("products")
+    .update({ images, updated_at: new Date().toISOString() })
+    .eq("id", productId);
+  if (writeError) fail("sync product images", writeError);
+}
+
 /**
  * Loads specific library assets (e.g. the ones a merchant just selected).
  */
@@ -1196,6 +1243,7 @@ export async function attachAssetsToProduct(input: {
     primaryTaken = true;
     attached += 1;
   }
+  if (attached > 0) await syncProductImageMirror(input.productId);
   return attached;
 }
 
@@ -1238,6 +1286,7 @@ export async function uploadProductMedia(input: {
   if (error) fail("attach photo", error);
   const row = oneOf(data);
   if (!row) throw new Error("attach photo: no row returned");
+  await syncProductImageMirror(input.productId);
   return mapProductMedia(row);
 }
 
@@ -1278,6 +1327,7 @@ export async function deleteProductMedia(media: ProductMedia): Promise<void> {
       await setPrimaryProductMedia(media.productId, remaining[0].id);
     }
   }
+  await syncProductImageMirror(media.productId);
 }
 
 /**
@@ -1302,6 +1352,7 @@ export async function setPrimaryProductMedia(
     .eq("id", mediaId)
     .eq("product_id", productId);
   if (error) fail("set primary photo", error);
+  await syncProductImageMirror(productId);
 }
 
 /** Persists a new gallery order; `orderedIds` is the full list, first to last. */
@@ -1320,6 +1371,7 @@ export async function reorderProductMedia(
       if (error) fail("reorder photos", error);
     }),
   );
+  await syncProductImageMirror(productId);
 }
 
 /* ---------- Orders ---------- */
