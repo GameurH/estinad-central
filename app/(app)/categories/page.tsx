@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/fields";
 import { LanguageTabs } from "@/components/ui/language-tabs";
+import { MediaField } from "@/components/media/media-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import {
@@ -18,9 +19,11 @@ import {
   deleteCategory,
   getCategories,
   getCategoryName,
+  getTenantMedia,
   missingTranslationLangs,
   saveCategoryTranslations,
   updateCategory,
+  uploadTenantImage,
 } from "@/lib/services";
 import type { Category, CategoryType, LangCode } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -69,6 +72,7 @@ export default function CategoriesPage() {
     nameFr: string;
     nameAr: string;
     nameEn: string;
+    image: string;
     type: CategoryType;
     parentId: string | null;
   }>(null);
@@ -105,6 +109,7 @@ export default function CategoriesPage() {
           name: editor.name,
           type: editor.type,
           parentId: editor.parentId,
+          image: editor.image || null,
         });
       } else {
         const created = await createCategory({
@@ -112,6 +117,7 @@ export default function CategoriesPage() {
           name: editor.name,
           type: editor.type,
           parentId: editor.parentId,
+          image: editor.image || null,
         });
         categoryId = created.id;
       }
@@ -201,6 +207,7 @@ export default function CategoriesPage() {
                   nameFr: translatedName(node, "fr"),
                   nameAr: translatedName(node, "ar"),
                   nameEn: translatedName(node, "en"),
+                  image: node.image ?? "",
                   type: node.type,
                   parentId: node.parentId,
                 });
@@ -239,7 +246,7 @@ export default function CategoriesPage() {
             icon={<Plus className="h-4 w-4" />}
             onClick={() => {
               setEditorLang("fr");
-              setEditor({ name: "", nameFr: "", nameAr: "", nameEn: "", type: "hospitality", parentId: null });
+              setEditor({ name: "", nameFr: "", nameAr: "", nameEn: "", image: "", type: "hospitality", parentId: null });
             }}
           >
             {t("add")}
@@ -269,6 +276,7 @@ export default function CategoriesPage() {
                     nameFr: "",
                     nameAr: "",
                     nameEn: "",
+                    image: "",
                     type: "hospitality",
                     parentId: null,
                   });
@@ -358,6 +366,22 @@ export default function CategoriesPage() {
                 </Select>
               </Field>
             </div>
+            {current && (
+              <MediaField
+                label={t("category_image")}
+                value={editor.image}
+                onChange={(image) => setEditor({ ...editor, image })}
+                loadLibrary={async () => ({ items: await getTenantMedia(current.id) })}
+                onUpload={async (file) => {
+                  const uploaded = await uploadTenantImage({
+                    tenantId: current.id,
+                    folder: "categories",
+                    file,
+                  });
+                  return uploaded.url;
+                }}
+              />
+            )}
             <div className="flex justify-end gap-2">
               <Button onClick={() => setEditor(null)}>{t("cancel")}</Button>
               <Button

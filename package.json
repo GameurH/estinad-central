@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:markdown": "node scripts/verify-markdown-render.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",

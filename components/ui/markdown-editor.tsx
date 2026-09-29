@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   Bold,
   Eye,
@@ -13,10 +13,11 @@ import {
   Pencil,
   Quote,
 } from "lucide-react";
+import { MediaPicker } from "@/components/media/media-picker";
+import type { MediaLibrary } from "@/components/media/types";
 import { useLanguage } from "@/components/providers/language-provider";
-import { Dialog } from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import type { MediaItem } from "@/lib/domain";
 import {
   insertImage,
   insertLink,
@@ -186,18 +187,13 @@ function ToolButton({
   );
 }
 
-export interface MarkdownImageSource {
-  url: string;
-  label: string;
-}
-
 export function MarkdownEditor({
   value,
   onChange,
   placeholder,
   ariaLabel,
   dir = "ltr",
-  loadImages,
+  loadLibrary,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -205,16 +201,16 @@ export function MarkdownEditor({
   ariaLabel?: string;
   dir?: "ltr" | "rtl";
   /**
-   * Optional image library. When provided, the image button opens a picker of
-   * these images instead of inserting a placeholder URL.
+   * Optional image source for the picker (see `components/media`). Without it
+   * the image button inserts a placeholder URL to paste into.
    */
-  loadImages?: () => Promise<MarkdownImageSource[]>;
+  loadLibrary?: () => Promise<MediaLibrary>;
 }) {
   const { t } = useLanguage();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [preview, setPreview] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [sources, setSources] = useState<MarkdownImageSource[] | null>(null);
+  const [library, setLibrary] = useState<MediaLibrary | null>(null);
   const pickerAnchor = useRef({ start: 0, end: 0 });
 
   const apply = (transform: (v: string, s: number, e: number) => MdEdit) => {
@@ -238,19 +234,19 @@ export function MarkdownEditor({
       ? { start: el.selectionStart, end: el.selectionEnd }
       : { start: value.length, end: value.length };
     setPickerOpen(true);
-    if (!loadImages) {
-      setSources([]);
+    if (!loadLibrary) {
+      setLibrary({ items: [] });
       return;
     }
-    setSources(null);
-    loadImages()
-      .then(setSources)
-      .catch(() => setSources([]));
+    setLibrary({ items: [], isLoading: true });
+    loadLibrary()
+      .then(setLibrary)
+      .catch(() => setLibrary({ items: [], error: true }));
   };
 
-  const insertPicked = (source: MarkdownImageSource) => {
+  const insertPicked = (item: MediaItem) => {
     const { start, end } = pickerAnchor.current;
-    const result = insertImage(value, start, end, source.url, source.label);
+    const result = insertImage(value, start, end, item.url, item.alt ?? "");
     onChange(result.text);
     setPickerOpen(false);
     requestAnimationFrame(() => {
@@ -260,6 +256,13 @@ export function MarkdownEditor({
       node.setSelectionRange(result.selectionStart, result.selectionEnd);
     });
   };
+
+  // The editor owns the loader, so it also owns reloading: after an upload from
+  // the picker the grid shows the new photo without closing the dialog.
+  const reloadLibrary = useCallback(async () => {
+    if (!loadLibrary) return;
+    setLibrary(await loadLibrary());
+  }, [loadLibrary]);
 
   return (
     <div className="overflow-hidden rounded-[var(--radius-sm)] border border-border bg-bg-secondary transition-colors focus-within:border-accent">
@@ -310,7 +313,7 @@ export function MarkdownEditor({
           icon={<ImageIcon className={iconClass} />}
           label={t("md_image")}
           disabled={preview}
-          onClick={() => (loadImages ? openPicker() : apply(insertImage))}
+          onClick={() => (loadLibrary ? openPicker() : apply(insertImage))}
         />
         <span aria-hidden className="mx-1 h-4 w-px bg-border" />
         <ToolButton
@@ -337,39 +340,14 @@ export function MarkdownEditor({
         />
       )}
 
-      <Dialog
+      <MediaPicker
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        title={t("md_image")}
-        description={t("md_image_pick")}
-        wide
-      >
-        {sources === null ? (
-          <Skeleton className="h-32 w-full" />
-        ) : sources.length === 0 ? (
-          <p className="text-[13px] text-text-muted">{t("md_image_pick_empty")}</p>
-        ) : (
-          <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4">
-            {sources.map((source) => (
-              <li key={source.url}>
-                <button
-                  type="button"
-                  onClick={() => insertPicked(source)}
-                  className="pressable block w-full cursor-pointer overflow-hidden rounded-[var(--radius-sm)] border border-border transition-colors hover:border-accent"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary merchant-authored host */}
-                  <img
-                    src={source.url}
-                    alt={source.label}
-                    loading="lazy"
-                    className="aspect-square w-full object-cover"
-                  />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Dialog>
+        onSelect={insertPicked}
+        library={
+          library ? { ...library, onRefresh: reloadLibrary } : { items: [], isLoading: true }
+        }
+      />
     </div>
   );
 }

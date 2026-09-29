@@ -495,6 +495,7 @@ export async function getCategories(tenantId: string): Promise<Category[]> {
       : "hospitality",
     parentId: strOrNull(c.parent_id),
     productCount: counts.get(str(c.id)) ?? 0,
+    image: strOrNull(c.image),
     translations: translations.get(str(c.id)) ?? [],
   }));
 }
@@ -801,6 +802,8 @@ export interface CategoryInput {
   name: string;
   type: Category["type"];
   parentId: string | null;
+  /** Public URL for the storefront category tile. */
+  image: string | null;
 }
 
 export async function createCategory(input: CategoryInput): Promise<Category> {
@@ -813,6 +816,7 @@ export async function createCategory(input: CategoryInput): Promise<Category> {
       name: input.name.trim(),
       type: input.type,
       parent_id: input.parentId,
+      image: input.image?.trim() || null,
     })
     .select("*")
     .single();
@@ -826,6 +830,7 @@ export async function createCategory(input: CategoryInput): Promise<Category> {
     type: input.type,
     parentId: strOrNull(row.parent_id),
     productCount: 0,
+    image: strOrNull(row.image),
   };
 }
 
@@ -838,6 +843,7 @@ export async function updateCategory(
   if (patch.name !== undefined) row.name = patch.name.trim();
   if (patch.type !== undefined) row.type = patch.type;
   if (patch.parentId !== undefined) row.parent_id = patch.parentId;
+  if (patch.image !== undefined) row.image = patch.image?.trim() || null;
   const { error } = await sb.from("categories").update(row).eq("id", id);
   if (error) fail("update category", error);
 }
@@ -890,7 +896,7 @@ function mapProductMedia(r: Row): ProductMedia {
     productId: str(r.product_id),
     storageBucket,
     storagePath,
-    altText: strOrNull(r.alt_text),
+    alt: strOrNull(r.alt_text),
     isPrimary: bool(r.is_primary),
     position: num(r.position),
     createdAt: str(r.created_at),
@@ -919,29 +925,89 @@ export async function getProductMedia(productId: string): Promise<ProductMedia[]
   return orderMedia(rowsOf(data).map(mapProductMedia));
 }
 
+/** Where one uploaded image landed, plus its public URL. */
+export interface UploadedImage {
+  storageBucket: string;
+  storagePath: string;
+  url: string;
+}
+
 /**
- * Uploads a photo to `<tenant>/<product>/…` and links it in `product_media`.
+ * Uploads one image to `<tenant>/<folder>/…` and returns where it landed.
  *
- * The folder prefix is what the Storage RLS policy checks, so it must be the
- * tenant id that also appears in `tenant_owners`. The first photo becomes the
- * primary one. If the row insert fails the object is removed again — an object
- * without a row is invisible and would only leak.
+ * The first path segment is what the Storage RLS policy checks, so it must be
+ * the tenant id that also appears in `tenant_owners`. Shared by the product
+ * gallery (folder = product id) and by single-image fields such as a category
+ * tile (folder = `categories`); the caller decides whether a row is attached.
+ */
+export async function uploadTenantImage(input: {
+  tenantId: string;
+  folder: string;
+  file: File;
+}): Promise<UploadedImage> {
+  const sb = getSupabase();
+  const extension = MEDIA_EXTENSIONS[input.file.type] ?? "bin";
+  const suffix = Math.random().toString(36).slice(2, 11);
+  const storagePath = `${input.tenantId}/${input.folder}/${Date.now()}-${suffix}.${extension}`;
+
+  const { error } = await sb.storage
+    .from(MEDIA_BUCKET)
+    .upload(storagePath, input.file, { contentType: input.file.type, upsert: false });
+  if (error) fail("upload image", error);
+
+  return {
+    storageBucket: MEDIA_BUCKET,
+    storagePath,
+    url: sb.storage.from(MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl,
+  };
+}
+
+/**
+ * Every photo the tenant has uploaded, newest first.
+ *
+ * This is the picker's library source for contexts that own no media rows of
+ * their own (a category tile, for example, has nowhere to store them), so the
+ * same picker can offer "your uploads" without a schema change.
+ */
+export async function getTenantMedia(tenantId: string, limit = 60): Promise<ProductMedia[]> {
+  const sb = getSupabase();
+  const { data: productData, error: productError } = await sb
+    .from("products")
+    .select("id")
+    .eq("tenant_id", tenantId);
+  if (productError) fail("load tenant media", productError);
+
+  const ids = rowsOf(productData).map((p) => str(p.id));
+  if (ids.length === 0) return [];
+
+  const { data, error } = await sb
+    .from("product_media")
+    .select(MEDIA_COLUMNS)
+    .in("product_id", ids)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) fail("load tenant media", error);
+  return rowsOf(data).map(mapProductMedia);
+}
+
+/**
+ * Uploads a photo into the product's folder and links it in `product_media`.
+ *
+ * The first photo becomes the primary one. If the row insert fails the object
+ * is removed again — an object without a row is invisible and would only leak.
  */
 export async function uploadProductMedia(input: {
   tenantId: string;
   productId: string;
   file: File;
-  altText?: string | null;
+  alt?: string | null;
 }): Promise<ProductMedia> {
   const sb = getSupabase();
-  const extension = MEDIA_EXTENSIONS[input.file.type] ?? "bin";
-  const suffix = Math.random().toString(36).slice(2, 11);
-  const path = `${input.tenantId}/${input.productId}/${Date.now()}-${suffix}.${extension}`;
-
-  const { error: uploadError } = await sb.storage
-    .from(MEDIA_BUCKET)
-    .upload(path, input.file, { contentType: input.file.type, upsert: false });
-  if (uploadError) fail("upload photo", uploadError);
+  const uploaded = await uploadTenantImage({
+    tenantId: input.tenantId,
+    folder: input.productId,
+    file: input.file,
+  });
 
   const existing = await getProductMedia(input.productId);
   const position = existing.reduce((max, m) => Math.max(max, m.position), -1) + 1;
@@ -950,9 +1016,9 @@ export async function uploadProductMedia(input: {
     .from("product_media")
     .insert({
       product_id: input.productId,
-      storage_bucket: MEDIA_BUCKET,
-      storage_path: path,
-      alt_text: input.altText?.trim() || null,
+      storage_bucket: uploaded.storageBucket,
+      storage_path: uploaded.storagePath,
+      alt_text: input.alt?.trim() || null,
       is_primary: existing.length === 0,
       position,
     })
@@ -960,7 +1026,7 @@ export async function uploadProductMedia(input: {
     .single();
 
   if (error) {
-    await sb.storage.from(MEDIA_BUCKET).remove([path]);
+    await sb.storage.from(uploaded.storageBucket).remove([uploaded.storagePath]);
     fail("attach photo", error);
   }
   const row = oneOf(data);

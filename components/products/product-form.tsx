@@ -22,6 +22,7 @@ import {
   getVariantName,
   saveProductTranslations,
   updateProduct,
+  uploadProductMedia,
 } from "@/lib/services";
 import { formatCurrency } from "@/lib/format";
 import type {
@@ -460,13 +461,17 @@ export function ProductForm({
                   dir={descLang === "ar" ? "rtl" : "ltr"}
                   ariaLabel={t("long_description")}
                   placeholder={t("long_description_hint")}
-                  loadImages={
+                  loadLibrary={
                     productId
-                      ? async () =>
-                          (await getProductMedia(productId)).map((media) => ({
-                            url: media.url,
-                            label: media.altText || draft.name,
-                          }))
+                      ? async () => ({
+                          items: (await getProductMedia(productId)).map((media) => ({
+                            ...media,
+                            alt: media.alt || draft.name,
+                          })),
+                          onUpload: async (file: File) => {
+                            await uploadProductMedia({ tenantId, productId, file });
+                          },
+                        })
                       : undefined
                   }
                 />

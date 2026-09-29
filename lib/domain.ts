@@ -90,22 +90,34 @@ export interface ProductTranslation {
 }
 
 /**
+ * The shape every media component works with.
+ *
+ * The gallery, the image picker and single-image fields depend on this — never
+ * on where the images come from — so a different source (a product's photos, a
+ * tenant-wide library, a category tile) can be plugged in without touching a
+ * consumer.
+ */
+export interface MediaItem {
+  id: string;
+  url: string;
+  /** Alternative text; this is also what the markdown picker writes into `![alt]`. */
+  alt: string | null;
+}
+
+/**
  * A photo attached to a product.
  *
  * Rows live in `product_media`, the bytes in the `product-media` Storage
  * bucket, and `url` is the derived public URL. This is the canonical gallery:
  * the storefront reads it first and only falls back to `Product.images`.
  */
-export interface ProductMedia {
-  id: string;
+export interface ProductMedia extends MediaItem {
   productId: string;
   storageBucket: string;
   storagePath: string;
-  altText: string | null;
   isPrimary: boolean;
   position: number;
   createdAt: string;
-  url: string;
 }
 
 export interface Variant {
@@ -134,6 +146,8 @@ export interface Category {
   type: CategoryType;
   parentId: string | null;
   productCount: number;
+  /** Public URL shown on the storefront category tile; `null` when unset. */
+  image: string | null;
   /** `category_translations` rows, when the caller loaded them. */
   translations?: CategoryTranslation[];
 }
