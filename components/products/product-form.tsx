@@ -8,8 +8,10 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Field, Input, Select, Switch, Textarea } from "@/components/ui/fields";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { LanguageTabs } from "@/components/ui/language-tabs";
 import { MarkdownEditor } from "@/components/ui/markdown-editor";
-import { LANGUAGES, useLanguage } from "@/components/providers/language-provider";
+import { ProductMediaManager } from "@/components/products/product-media-manager";
+import { useLanguage } from "@/components/providers/language-provider";
 import { useToast } from "@/components/providers/toast-provider";
 import {
   createProduct,
@@ -17,7 +19,7 @@ import {
   deleteProduct,
   deleteVariant,
   getVariantName,
-  saveProductLongDescriptions,
+  saveProductTranslations,
   updateProduct,
 } from "@/lib/services";
 import { formatCurrency } from "@/lib/format";
@@ -34,6 +36,9 @@ import { cn } from "@/lib/utils";
 
 export interface ProductDraft {
   name: string;
+  nameFr: string;
+  nameAr: string;
+  nameEn: string;
   type: ProductType;
   price: number;
   costPrice: number | null;
@@ -56,6 +61,9 @@ export function draftFromProduct(
   const byLang = new Map(translations.map((t) => [t.languageCode, t]));
   return {
     name: p.name,
+    nameFr: byLang.get("fr")?.name ?? "",
+    nameAr: byLang.get("ar")?.name ?? "",
+    nameEn: byLang.get("en")?.name ?? "",
     type: p.type,
     price: p.price,
     costPrice: p.costPrice,
@@ -73,6 +81,9 @@ export function draftFromProduct(
 
 export const EMPTY_DRAFT: ProductDraft = {
   name: "",
+  nameFr: "",
+  nameAr: "",
+  nameEn: "",
   type: "simple",
   price: 0,
   costPrice: null,
@@ -117,6 +128,7 @@ export function ProductForm({
   const [localVariants, setLocalVariants] = useState<Variant[]>(variants);
   const [variantName, setVariantName] = useState("");
   const [variantMod, setVariantMod] = useState("0");
+  const [nameLang, setNameLang] = useState<LangCode>("fr");
   const [descLang, setDescLang] = useState<LangCode>("fr");
 
   const dirty = useMemo(
@@ -134,6 +146,15 @@ export function ProductForm({
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
+
+  const nameValue =
+    nameLang === "ar" ? draft.nameAr : nameLang === "en" ? draft.nameEn : draft.nameFr;
+
+  const setName = (value: string) => {
+    if (nameLang === "ar") set("nameAr", value);
+    else if (nameLang === "en") set("nameEn", value);
+    else set("nameFr", value);
+  };
 
   const longDescriptionValue =
     descLang === "ar"
@@ -155,10 +176,25 @@ export function ProductForm({
     if (!valid || saving) return;
     setSaving(true);
     try {
-      const longDescriptions = [
-        { languageCode: "fr" as const, longDescription: draft.longDescription || null },
-        { languageCode: "ar" as const, longDescription: draft.longDescriptionAr || null },
-        { languageCode: "en" as const, longDescription: draft.longDescriptionEn || null },
+      // `products.name` holds the primary name; the per-language rows in
+      // `product_translations` hold what the storefront shows for each language
+      // (the base catalog is English, so the `fr` row is a real translation).
+      const translations = [
+        {
+          languageCode: "fr" as const,
+          name: draft.nameFr || null,
+          longDescription: draft.longDescription || null,
+        },
+        {
+          languageCode: "ar" as const,
+          name: draft.nameAr || null,
+          longDescription: draft.longDescriptionAr || null,
+        },
+        {
+          languageCode: "en" as const,
+          name: draft.nameEn || null,
+          longDescription: draft.longDescriptionEn || null,
+        },
       ];
 
       if (mode === "create") {
@@ -184,7 +220,7 @@ export function ProductForm({
             priceMod: v.priceMod,
           });
         }
-        await saveProductLongDescriptions(id, draft.name, longDescriptions);
+        await saveProductTranslations(id, draft.name, translations);
         toast(t("product_created"));
         router.push(`/products/${id}`);
       } else if (productId) {
@@ -201,7 +237,7 @@ export function ProductForm({
           shortDescription: draft.shortDescription || null,
           longDescription: draft.longDescription || null,
         });
-        await saveProductLongDescriptions(productId, draft.name, longDescriptions);
+        await saveProductTranslations(productId, draft.name, translations);
         toast(t("product_saved"));
         router.push("/products");
       }
@@ -305,7 +341,7 @@ export function ProductForm({
             <Card>
               <CardHeader title={t("details")} />
               <div className="space-y-4 p-4">
-                <Field label={t("name")}>
+                <Field label={t("name")} hint={t("name_primary_hint")}>
                   <Input
                     value={draft.name}
                     onChange={(e) => set("name", e.target.value)}
@@ -313,6 +349,26 @@ export function ProductForm({
                     autoFocus={mode === "create"}
                   />
                 </Field>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                    {t("name_translations")}
+                  </span>
+                  <LanguageTabs
+                    value={nameLang}
+                    onChange={setNameLang}
+                    className="border-b border-border"
+                  />
+                  <Input
+                    value={nameValue}
+                    onChange={(e) => setName(e.target.value)}
+                    dir={nameLang === "ar" ? "rtl" : "ltr"}
+                    aria-label={t("name_translations")}
+                    placeholder={draft.name || "…"}
+                  />
+                  <span className="mt-1 block text-xs text-text-muted">
+                    {t("name_hint")}
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label={t("category")}>
                     <Select
@@ -378,36 +434,24 @@ export function ProductForm({
               </div>
             </Card>
 
+            {productId ? (
+              <ProductMediaManager tenantId={tenantId} productId={productId} />
+            ) : (
+              <Card>
+                <CardHeader title={t("media")} subtitle={t("media_save_first")} />
+              </Card>
+            )}
+
             <Card>
               <CardHeader
                 title={t("long_description")}
                 subtitle={t("long_description_hint")}
               />
-              <div className="flex gap-1 border-b border-border px-4">
-                {LANGUAGES.map((l) => (
-                  <button
-                    key={l.code}
-                    type="button"
-                    role="tab"
-                    aria-selected={descLang === l.code}
-                    onClick={() => setDescLang(l.code)}
-                    className={cn(
-                      "relative cursor-pointer px-3 py-2 text-[13px] font-medium transition-colors",
-                      descLang === l.code
-                        ? "text-text-primary"
-                        : "text-text-secondary hover:text-text-primary",
-                    )}
-                  >
-                    {l.nativeName}
-                    {descLang === l.code && (
-                      <span
-                        aria-hidden
-                        className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary"
-                      />
-                    )}
-                  </button>
-                ))}
-              </div>
+              <LanguageTabs
+                value={descLang}
+                onChange={setDescLang}
+                className="border-b border-border px-4"
+              />
               <div className="p-4">
                 <MarkdownEditor
                   value={longDescriptionValue}
@@ -569,6 +613,7 @@ export function ProductForm({
         title={t("confirm_delete_title")}
         body={t("confirm_delete_body")}
         confirmLabel={t("delete")}
+        cancelLabel={t("cancel")}
       />
     </div>
   );

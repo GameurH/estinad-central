@@ -71,6 +71,7 @@ export interface Product {
   barcode: string | null;
   isAvailable: boolean;
   image: string | null;
+  /** Legacy RMS image URLs. Products with uploaded media use `product_media` instead. */
   images: string[];
   printerDest: PrinterDest;
   shortDescription: string | null;
@@ -86,6 +87,25 @@ export interface ProductTranslation {
   name: string;
   shortDescription: string | null;
   longDescription: string | null;
+}
+
+/**
+ * A photo attached to a product.
+ *
+ * Rows live in `product_media`, the bytes in the `product-media` Storage
+ * bucket, and `url` is the derived public URL. This is the canonical gallery:
+ * the storefront reads it first and only falls back to `Product.images`.
+ */
+export interface ProductMedia {
+  id: string;
+  productId: string;
+  storageBucket: string;
+  storagePath: string;
+  altText: string | null;
+  isPrimary: boolean;
+  position: number;
+  createdAt: string;
+  url: string;
 }
 
 export interface Variant {
@@ -109,10 +129,13 @@ export type CategoryType = "retail" | "hospitality" | "service";
 export interface Category {
   id: string;
   tenantId: string;
+  /** Base name (POS-owned). Per-language names live in `translations`. */
   name: string;
   type: CategoryType;
   parentId: string | null;
   productCount: number;
+  /** `category_translations` rows, when the caller loaded them. */
+  translations?: CategoryTranslation[];
 }
 
 export interface CategoryTranslation {

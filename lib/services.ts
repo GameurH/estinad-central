@@ -17,6 +17,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import type {
   BrandConfig,
   Category,
+  CategoryTranslation,
   DailySales,
   DashboardSummary,
   HourlySales,
@@ -31,6 +32,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   Product,
+  ProductMedia,
   ProductPerformance,
   ProductTranslation,
   ShippingStatus,
@@ -464,6 +466,7 @@ export async function getCategories(tenantId: string): Promise<Category[]> {
 
   const cats = rowsOf(cData);
   const ids = cats.map((c) => str(c.id));
+  const translations = new Map<string, CategoryTranslation[]>();
   if (ids.length > 0) {
     const { data: tData, error: tErr } = await sb
       .from("category_translations")
@@ -472,7 +475,13 @@ export async function getCategories(tenantId: string): Promise<Category[]> {
     if (tErr) fail("load category translations", tErr);
     for (const c of cats) seedBase("category", str(c.id), str(c.name));
     for (const t of rowsOf(tData)) {
-      putTr("category", str(t.category_id), str(t.language_code), str(t.name));
+      const categoryId = str(t.category_id);
+      const languageCode = asLangCode(t.language_code);
+      putTr("category", categoryId, str(t.language_code), str(t.name));
+      if (!languageCode) continue;
+      const list = translations.get(categoryId) ?? [];
+      list.push({ categoryId, languageCode, name: str(t.name) });
+      translations.set(categoryId, list);
     }
   }
 
@@ -486,6 +495,7 @@ export async function getCategories(tenantId: string): Promise<Category[]> {
       : "hospitality",
     parentId: strOrNull(c.parent_id),
     productCount: counts.get(str(c.id)) ?? 0,
+    translations: translations.get(str(c.id)) ?? [],
   }));
 }
 
@@ -611,52 +621,133 @@ export async function updateProduct(
 }
 
 /**
- * Persists per-language storefront long descriptions in `product_translations`.
+ * Maps the `language_code` values a translation table already holds for one row.
  *
- * Only `long_description` is written: `name`/`short_description` are owned by
- * the POS sync and must not be clobbered. Rows are created on demand (with the
- * base product name, which the storefront already falls back to) and existing
- * rows are updated in place. Clearing a description sets it back to NULL and
- * never orphans an empty row.
+ * Live data uses `fr` / `ar` / `en` but the schema allows aliases (`ara`,
+ * `ar-SA`…), so writes must target the stored value: inserting a second row for
+ * the same language would violate the `(owner, language_code)` unique key.
  */
-export async function saveProductLongDescriptions(
-  productId: string,
-  baseName: string,
-  entries: { languageCode: LangCode; longDescription: string | null }[],
-): Promise<void> {
-  if (entries.length === 0) return;
+async function storedLanguageCodes(
+  table: "product_translations" | "category_translations",
+  column: "product_id" | "category_id",
+  id: string,
+): Promise<Map<LangCode, string>> {
   const sb = getSupabase();
-  const { data, error } = await sb
-    .from("product_translations")
-    .select("language_code")
-    .eq("product_id", productId);
-  if (error) fail("load product translations", error);
-  const existing = new Map<LangCode, string>();
+  const { data, error } = await sb.from(table).select("language_code").eq(column, id);
+  if (error) fail(`load ${table}`, error);
+  const stored = new Map<LangCode, string>();
   for (const r of rowsOf(data)) {
     const code = asLangCode(r.language_code);
     const raw = str(r.language_code);
-    if (code && raw) existing.set(code, raw);
+    if (code && raw) stored.set(code, raw);
   }
+  return stored;
+}
+
+export interface ProductTranslationInput {
+  languageCode: LangCode;
+  /** Blank field → the stored name falls back to the primary name. */
+  name: string | null;
+  longDescription: string | null;
+}
+
+/**
+ * Upserts per-language storefront copy in `product_translations`.
+ *
+ * `name` and `long_description` are written; `short_description` is left to the
+ * POS sync. `name` is NOT NULL, so a blank field falls back to the primary name.
+ * Rows are created only when they carry real content — a name that differs from
+ * the primary name, or a description — and clearing a description writes NULL
+ * rather than orphaning an empty row.
+ */
+export async function saveProductTranslations(
+  productId: string,
+  baseName: string,
+  entries: ProductTranslationInput[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const sb = getSupabase();
+  const stored = await storedLanguageCodes("product_translations", "product_id", productId);
+  const base = baseName.trim() || "—";
+  const now = new Date().toISOString();
 
   for (const entry of entries) {
-    const value = entry.longDescription?.trim() || null;
-    const rawLanguage = existing.get(entry.languageCode);
-    if (rawLanguage) {
-      const { error: upErr } = await sb
+    const name = entry.name?.trim() || null;
+    const longDescription = entry.longDescription?.trim() || null;
+    const raw = stored.get(entry.languageCode);
+
+    if (raw) {
+      const patch: Record<string, unknown> = {
+        long_description: longDescription,
+        updated_at: now,
+      };
+      // `name` is NOT NULL, so a blank field stores the primary name instead.
+      patch.name = name ?? base;
+      const { error } = await sb
         .from("product_translations")
-        .update({ long_description: value })
+        .update(patch)
         .eq("product_id", productId)
-        .eq("language_code", rawLanguage);
-      if (upErr) fail("save product description", upErr);
-    } else if (value) {
-      const { error: inErr } = await sb.from("product_translations").insert({
-        product_id: productId,
-        language_code: entry.languageCode,
-        name: baseName.trim() || "—",
-        long_description: value,
-      });
-      if (inErr) fail("save product description", inErr);
+        .eq("language_code", raw);
+      if (error) fail("save product translation", error);
+      continue;
     }
+
+    if (!((name !== null && name !== base) || longDescription !== null)) continue;
+    const { error } = await sb.from("product_translations").insert({
+      product_id: productId,
+      language_code: entry.languageCode,
+      name: name ?? base,
+      long_description: longDescription,
+    });
+    if (error) fail("save product translation", error);
+  }
+}
+
+export interface CategoryTranslationInput {
+  languageCode: LangCode;
+  /** Blank field → the stored name falls back to the base name. */
+  name: string | null;
+}
+
+/**
+ * Upserts per-language category names in `category_translations`, with the same
+ * rules as products: a blank field stores the base name (`name` is NOT NULL),
+ * and a row is only created for a name that differs from it.
+ */
+export async function saveCategoryTranslations(
+  categoryId: string,
+  baseName: string,
+  entries: CategoryTranslationInput[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const sb = getSupabase();
+  const stored = await storedLanguageCodes("category_translations", "category_id", categoryId);
+  const base = baseName.trim() || "—";
+  const now = new Date().toISOString();
+
+  for (const entry of entries) {
+    const name = entry.name?.trim() || null;
+    const raw = stored.get(entry.languageCode);
+
+    if (raw) {
+      const patch: Record<string, unknown> = { updated_at: now };
+      patch.name = name ?? base;
+      const { error } = await sb
+        .from("category_translations")
+        .update(patch)
+        .eq("category_id", categoryId)
+        .eq("language_code", raw);
+      if (error) fail("save category translation", error);
+      continue;
+    }
+
+    if (name === null || name === base) continue;
+    const { error } = await sb.from("category_translations").insert({
+      category_id: categoryId,
+      language_code: entry.languageCode,
+      name,
+    });
+    if (error) fail("save category translation", error);
   }
 }
 
@@ -766,6 +857,176 @@ export async function deleteCategory(id: string): Promise<void> {
     }
     fail("delete category", error);
   }
+}
+
+/* ---------- Product media ---------- */
+
+const MEDIA_BUCKET = "product-media";
+
+/** Mirrors the live `product-media` bucket config (5 MB, image allow-list). */
+export const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
+export const MEDIA_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+] as const;
+
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+const MEDIA_COLUMNS =
+  "id,product_id,storage_bucket,storage_path,alt_text,is_primary,position,created_at";
+
+function mapProductMedia(r: Row): ProductMedia {
+  const storageBucket = str(r.storage_bucket, MEDIA_BUCKET);
+  const storagePath = str(r.storage_path);
+  return {
+    id: str(r.id),
+    productId: str(r.product_id),
+    storageBucket,
+    storagePath,
+    altText: strOrNull(r.alt_text),
+    isPrimary: bool(r.is_primary),
+    position: num(r.position),
+    createdAt: str(r.created_at),
+    url: storagePath
+      ? getSupabase().storage.from(storageBucket).getPublicUrl(storagePath).data.publicUrl
+      : "",
+  };
+}
+
+/** Same order the storefront uses: primary first, then position, then age. */
+function orderMedia(media: ProductMedia[]): ProductMedia[] {
+  return media.slice().sort((a, b) => {
+    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+    if (a.position !== b.position) return a.position - b.position;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+}
+
+export async function getProductMedia(productId: string): Promise<ProductMedia[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("product_media")
+    .select(MEDIA_COLUMNS)
+    .eq("product_id", productId);
+  if (error) fail("load product media", error);
+  return orderMedia(rowsOf(data).map(mapProductMedia));
+}
+
+/**
+ * Uploads a photo to `<tenant>/<product>/…` and links it in `product_media`.
+ *
+ * The folder prefix is what the Storage RLS policy checks, so it must be the
+ * tenant id that also appears in `tenant_owners`. The first photo becomes the
+ * primary one. If the row insert fails the object is removed again — an object
+ * without a row is invisible and would only leak.
+ */
+export async function uploadProductMedia(input: {
+  tenantId: string;
+  productId: string;
+  file: File;
+  altText?: string | null;
+}): Promise<ProductMedia> {
+  const sb = getSupabase();
+  const extension = MEDIA_EXTENSIONS[input.file.type] ?? "bin";
+  const suffix = Math.random().toString(36).slice(2, 11);
+  const path = `${input.tenantId}/${input.productId}/${Date.now()}-${suffix}.${extension}`;
+
+  const { error: uploadError } = await sb.storage
+    .from(MEDIA_BUCKET)
+    .upload(path, input.file, { contentType: input.file.type, upsert: false });
+  if (uploadError) fail("upload photo", uploadError);
+
+  const existing = await getProductMedia(input.productId);
+  const position = existing.reduce((max, m) => Math.max(max, m.position), -1) + 1;
+
+  const { data, error } = await sb
+    .from("product_media")
+    .insert({
+      product_id: input.productId,
+      storage_bucket: MEDIA_BUCKET,
+      storage_path: path,
+      alt_text: input.altText?.trim() || null,
+      is_primary: existing.length === 0,
+      position,
+    })
+    .select(MEDIA_COLUMNS)
+    .single();
+
+  if (error) {
+    await sb.storage.from(MEDIA_BUCKET).remove([path]);
+    fail("attach photo", error);
+  }
+  const row = oneOf(data);
+  if (!row) throw new Error("attach photo: no row returned");
+  return mapProductMedia(row);
+}
+
+/** Removes the file and its row, then promotes a new primary if needed. */
+export async function deleteProductMedia(media: ProductMedia): Promise<void> {
+  const sb = getSupabase();
+  const { error: removeError } = await sb.storage
+    .from(media.storageBucket)
+    .remove([media.storagePath]);
+  if (removeError) fail("remove photo file", removeError);
+
+  const { error } = await sb.from("product_media").delete().eq("id", media.id);
+  if (error) fail("remove photo", error);
+
+  if (media.isPrimary) {
+    const remaining = await getProductMedia(media.productId);
+    if (remaining.length > 0) {
+      await setPrimaryProductMedia(media.productId, remaining[0].id);
+    }
+  }
+}
+
+/**
+ * Marks one photo as primary. There is no DB constraint on `is_primary`, so the
+ * previous primary is cleared first.
+ */
+export async function setPrimaryProductMedia(
+  productId: string,
+  mediaId: string,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error: clearError } = await sb
+    .from("product_media")
+    .update({ is_primary: false })
+    .eq("product_id", productId)
+    .eq("is_primary", true);
+  if (clearError) fail("reset primary photo", clearError);
+
+  const { error } = await sb
+    .from("product_media")
+    .update({ is_primary: true })
+    .eq("id", mediaId)
+    .eq("product_id", productId);
+  if (error) fail("set primary photo", error);
+}
+
+/** Persists a new gallery order; `orderedIds` is the full list, first to last. */
+export async function reorderProductMedia(
+  productId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const sb = getSupabase();
+  await Promise.all(
+    orderedIds.map(async (id, index) => {
+      const { error } = await sb
+        .from("product_media")
+        .update({ position: index })
+        .eq("id", id)
+        .eq("product_id", productId);
+      if (error) fail("reorder photos", error);
+    }),
+  );
 }
 
 /* ---------- Orders ---------- */

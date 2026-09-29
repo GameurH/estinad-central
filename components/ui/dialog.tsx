@@ -77,6 +77,7 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
+  cancelLabel = "Annuler",
   loading = false,
 }: {
   open: boolean;
@@ -85,12 +86,13 @@ export function ConfirmDialog({
   title: string;
   body: string;
   confirmLabel: string;
+  cancelLabel?: string;
   loading?: boolean;
 }) {
   return (
     <Dialog open={open} onClose={onClose} title={title} description={body}>
       <div className="flex justify-end gap-2">
-        <Button onClick={onClose}>Annuler</Button>
+        <Button onClick={onClose}>{cancelLabel}</Button>
         <Button variant="danger" loading={loading} onClick={onConfirm}>
           {confirmLabel}
         </Button>
