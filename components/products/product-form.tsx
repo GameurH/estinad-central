@@ -18,7 +18,7 @@ import {
   createVariant,
   deleteProduct,
   deleteVariant,
-  getProductMedia,
+  getMediaAssets,
   getVariantName,
   saveProductTranslations,
   updateProduct,
@@ -464,9 +464,9 @@ export function ProductForm({
                   loadLibrary={
                     productId
                       ? async () => ({
-                          items: (await getProductMedia(productId)).map((media) => ({
-                            ...media,
-                            alt: media.alt || draft.name,
+                          items: (await getMediaAssets(tenantId)).map((asset) => ({
+                            ...asset,
+                            alt: asset.alt || draft.name,
                           })),
                           onUpload: async (file: File) => {
                             await uploadProductMedia({ tenantId, productId, file });

@@ -21,7 +21,7 @@ const TILE_SIZES = "(min-width: 1280px) 180px, (min-width: 640px) 28vw, 44vw";
 export function MediaGrid<T extends MediaItem>({
   items,
   onSelect,
-  selectedId,
+  selectedIds,
   busyId,
   renderOverlay,
   renderActions,
@@ -29,7 +29,8 @@ export function MediaGrid<T extends MediaItem>({
 }: {
   items: T[];
   onSelect?: (item: T) => void;
-  selectedId?: string | null;
+  /** Ids rendered as selected (multi-select pickers). */
+  selectedIds?: string[];
   /** Id of the tile showing a busy overlay (an in-flight mutation). */
   busyId?: string | null;
   /** Rendered inside the image well, e.g. a "primary" badge. */
@@ -67,7 +68,7 @@ export function MediaGrid<T extends MediaItem>({
             key={item.id}
             className={cn(
               "overflow-hidden rounded-[var(--radius-sm)] border bg-bg-secondary",
-              selectedId === item.id ? "border-accent" : "border-border",
+              selectedIds?.includes(item.id) ? "border-accent" : "border-border",
             )}
           >
             {onSelect ? (

@@ -90,6 +90,27 @@ export interface ProductTranslation {
 }
 
 /**
+ * A photo in the tenant's media library (`media_assets`).
+ *
+ * This is the base every image starts as: the bytes live in the
+ * `product-media` bucket and the row carries the organisation — `folder`,
+ * `tags`, `isFavorite`. Product galleries reference an asset through
+ * `product_media.asset_id` (keeping their own order + primary flag), so one
+ * upload can serve several products, a long description or a category tile.
+ */
+export interface MediaAsset extends MediaItem {
+  tenantId: string;
+  storageBucket: string;
+  storagePath: string;
+  /** Path-style, `''` for the library root, e.g. `Miels/Sidr`. */
+  folder: string;
+  tags: string[];
+  isFavorite: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * The shape every media component works with.
  *
  * The gallery, the image picker and single-image fields depend on this — never
@@ -115,6 +136,8 @@ export interface ProductMedia extends MediaItem {
   productId: string;
   storageBucket: string;
   storagePath: string;
+  /** Library asset this photo comes from; `null` for rows created before the library. */
+  assetId: string | null;
   isPrimary: boolean;
   position: number;
   createdAt: string;

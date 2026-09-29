@@ -8,6 +8,7 @@ import {
   Globe,
   Package,
   FolderTree,
+  Images,
   FileBarChart,
   Settings,
   LogOut,
@@ -22,6 +23,7 @@ const ITEMS = [
   { key: "online_orders", href: "/orders/online", icon: Globe },
   { key: "products", href: "/products", icon: Package },
   { key: "categories", href: "/categories", icon: FolderTree },
+  { key: "media_library", href: "/media", icon: Images },
   { key: "reports", href: "/reports", icon: FileBarChart },
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;

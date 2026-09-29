@@ -19,7 +19,7 @@ import {
   deleteCategory,
   getCategories,
   getCategoryName,
-  getTenantMedia,
+  getMediaAssets,
   missingTranslationLangs,
   saveCategoryTranslations,
   updateCategory,
@@ -371,7 +371,7 @@ export default function CategoriesPage() {
                 label={t("category_image")}
                 value={editor.image}
                 onChange={(image) => setEditor({ ...editor, image })}
-                loadLibrary={async () => ({ items: await getTenantMedia(current.id) })}
+                loadLibrary={async () => ({ items: await getMediaAssets(current.id) })}
                 onUpload={async (file) => {
                   const uploaded = await uploadTenantImage({
                     tenantId: current.id,

@@ -34,6 +34,7 @@ import type {
   Product,
   ProductMedia,
   ProductPerformance,
+  MediaAsset,
   ProductTranslation,
   ShippingStatus,
   Tenant,
@@ -865,6 +866,186 @@ export async function deleteCategory(id: string): Promise<void> {
   }
 }
 
+/* ---------- Media library ---------- */
+
+const MEDIA_ASSET_COLUMNS =
+  "id,tenant_id,storage_bucket,storage_path,alt_text,folder,tags,is_favorite,created_at,updated_at";
+
+function mapMediaAsset(r: Row): MediaAsset {
+  const storageBucket = str(r.storage_bucket, MEDIA_BUCKET);
+  const storagePath = str(r.storage_path);
+  return {
+    id: str(r.id),
+    tenantId: str(r.tenant_id),
+    storageBucket,
+    storagePath,
+    alt: strOrNull(r.alt_text),
+    folder: str(r.folder),
+    tags: Array.isArray(r.tags)
+      ? (r.tags as unknown[]).filter((t): t is string => typeof t === "string")
+      : [],
+    isFavorite: bool(r.is_favorite),
+    createdAt: str(r.created_at),
+    updatedAt: str(r.updated_at),
+    url: storagePath
+      ? getSupabase().storage.from(storageBucket).getPublicUrl(storagePath).data.publicUrl
+      : "",
+  };
+}
+
+export interface MediaAssetFilter {
+  /** Exact folder path; `''` is the library root. Omit for every folder. */
+  folder?: string;
+  tag?: string;
+  favoritesOnly?: boolean;
+  /** Case-insensitive substring of the storage path (i.e. the filename). */
+  search?: string;
+  limit?: number;
+}
+
+export async function getMediaAssets(
+  tenantId: string,
+  filter: MediaAssetFilter = {},
+): Promise<MediaAsset[]> {
+  const sb = getSupabase();
+  let query = sb
+    .from("media_assets")
+    .select(MEDIA_ASSET_COLUMNS)
+    .eq("tenant_id", tenantId);
+
+  if (filter.folder !== undefined) query = query.eq("folder", filter.folder);
+  if (filter.favoritesOnly) query = query.eq("is_favorite", true);
+  if (filter.tag) query = query.contains("tags", [filter.tag]);
+  if (filter.search) query = query.ilike("storage_path", `%${filter.search}%`);
+
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .limit(filter.limit ?? 200);
+  if (error) fail("load media library", error);
+  return rowsOf(data).map(mapMediaAsset);
+}
+
+/** Folder paths in use, sorted — the library sidebar. */
+export async function listMediaFolders(tenantId: string): Promise<string[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("media_assets")
+    .select("folder")
+    .eq("tenant_id", tenantId);
+  if (error) fail("load media folders", error);
+  return Array.from(new Set(rowsOf(data).map((r) => str(r.folder)))).sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+/** Tag vocabulary in use, sorted. */
+export async function listMediaTags(tenantId: string): Promise<string[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("media_assets").select("tags").eq("tenant_id", tenantId);
+  if (error) fail("load media tags", error);
+  const tags = new Set<string>();
+  for (const row of rowsOf(data)) {
+    if (!Array.isArray(row.tags)) continue;
+    for (const tag of row.tags as unknown[]) {
+      if (typeof tag === "string" && tag) tags.add(tag);
+    }
+  }
+  return Array.from(tags).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Uploads a file into the library (`<tenant>/library/<folder>/…`) and indexes
+ * it. Nothing is attached to a product here — callers attach afterwards, which
+ * is what stops uploads from becoming unreachable objects.
+ */
+export async function uploadMediaAsset(input: {
+  tenantId: string;
+  file: File;
+  folder?: string;
+  alt?: string | null;
+  tags?: string[];
+}): Promise<MediaAsset> {
+  const sb = getSupabase();
+  const folder = (input.folder ?? "").trim().replace(/^\/+|\/+$/g, "");
+  const uploaded = await uploadTenantImage({
+    tenantId: input.tenantId,
+    folder: folder ? `library/${folder}` : "library",
+    file: input.file,
+  });
+
+  const { data, error } = await sb
+    .from("media_assets")
+    .insert({
+      tenant_id: input.tenantId,
+      storage_bucket: uploaded.storageBucket,
+      storage_path: uploaded.storagePath,
+      alt_text: input.alt?.trim() || null,
+      folder,
+      tags: input.tags ?? [],
+    })
+    .select(MEDIA_ASSET_COLUMNS)
+    .single();
+
+  if (error) {
+    await sb.storage.from(uploaded.storageBucket).remove([uploaded.storagePath]);
+    fail("index uploaded image", error);
+  }
+  const row = oneOf(data);
+  if (!row) throw new Error("index uploaded image: no row returned");
+  return mapMediaAsset(row);
+}
+
+/** Organises one asset: alt text, folder, tags, favourite. */
+export async function updateMediaAsset(
+  id: string,
+  patch: {
+    altText?: string | null;
+    folder?: string;
+    tags?: string[];
+    isFavorite?: boolean;
+  },
+): Promise<void> {
+  const sb = getSupabase();
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.altText !== undefined) row.alt_text = patch.altText?.trim() || null;
+  if (patch.folder !== undefined) row.folder = patch.folder.trim().replace(/^\/+|\/+$/g, "");
+  if (patch.tags !== undefined) row.tags = patch.tags;
+  if (patch.isFavorite !== undefined) row.is_favorite = patch.isFavorite;
+  const { error } = await sb.from("media_assets").update(row).eq("id", id);
+  if (error) fail("update media asset", error);
+}
+
+/**
+ * Removes an asset from the library.
+ *
+ * If a product gallery still points at the object the file is kept and only the
+ * index row goes — deleting the bytes would blank a live product photo. Returns
+ * whether the object itself was removed so the UI can say which happened.
+ */
+export async function deleteMediaAsset(
+  asset: MediaAsset,
+): Promise<{ objectRemoved: boolean }> {
+  const sb = getSupabase();
+  const { count, error: countError } = await sb
+    .from("product_media")
+    .select("id", { count: "exact", head: true })
+    .eq("storage_bucket", asset.storageBucket)
+    .eq("storage_path", asset.storagePath);
+  if (countError) fail("check media usage", countError);
+
+  const attached = (count ?? 0) > 0;
+  if (!attached) {
+    const { error: removeError } = await sb.storage
+      .from(asset.storageBucket)
+      .remove([asset.storagePath]);
+    if (removeError) fail("remove image file", removeError);
+  }
+
+  const { error } = await sb.from("media_assets").delete().eq("id", asset.id);
+  if (error) fail("remove media asset", error);
+  return { objectRemoved: !attached };
+}
+
 /* ---------- Product media ---------- */
 
 const MEDIA_BUCKET = "product-media";
@@ -886,7 +1067,7 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
 };
 
 const MEDIA_COLUMNS =
-  "id,product_id,storage_bucket,storage_path,alt_text,is_primary,position,created_at";
+  "id,product_id,storage_bucket,storage_path,asset_id,alt_text,is_primary,position,created_at";
 
 function mapProductMedia(r: Row): ProductMedia {
   const storageBucket = str(r.storage_bucket, MEDIA_BUCKET);
@@ -896,6 +1077,7 @@ function mapProductMedia(r: Row): ProductMedia {
     productId: str(r.product_id),
     storageBucket,
     storagePath,
+    assetId: strOrNull(r.asset_id),
     alt: strOrNull(r.alt_text),
     isPrimary: bool(r.is_primary),
     position: num(r.position),
@@ -963,38 +1145,66 @@ export async function uploadTenantImage(input: {
 }
 
 /**
- * Every photo the tenant has uploaded, newest first.
- *
- * This is the picker's library source for contexts that own no media rows of
- * their own (a category tile, for example, has nowhere to store them), so the
- * same picker can offer "your uploads" without a schema change.
+ * Loads specific library assets (e.g. the ones a merchant just selected).
  */
-export async function getTenantMedia(tenantId: string, limit = 60): Promise<ProductMedia[]> {
-  const sb = getSupabase();
-  const { data: productData, error: productError } = await sb
-    .from("products")
-    .select("id")
-    .eq("tenant_id", tenantId);
-  if (productError) fail("load tenant media", productError);
-
-  const ids = rowsOf(productData).map((p) => str(p.id));
+export async function getMediaAssetsByIds(ids: string[]): Promise<MediaAsset[]> {
   if (ids.length === 0) return [];
-
+  const sb = getSupabase();
   const { data, error } = await sb
-    .from("product_media")
-    .select(MEDIA_COLUMNS)
-    .in("product_id", ids)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (error) fail("load tenant media", error);
-  return rowsOf(data).map(mapProductMedia);
+    .from("media_assets")
+    .select(MEDIA_ASSET_COLUMNS)
+    .in("id", ids);
+  if (error) fail("load media assets", error);
+  return rowsOf(data).map(mapMediaAsset);
 }
 
 /**
- * Uploads a photo into the product's folder and links it in `product_media`.
+ * Attaches library assets to a product's gallery.
  *
- * The first photo becomes the primary one. If the row insert fails the object
- * is removed again — an object without a row is invisible and would only leak.
+ * The gallery row keeps the object's bucket/path because that is what the
+ * storefront reads, and adds `asset_id` so the library stays the single place
+ * where folder/tags/favourite live. Assets already on the product are skipped
+ * (the table is unique on bucket+path), so this is safe to call twice.
+ */
+export async function attachAssetsToProduct(input: {
+  tenantId: string;
+  productId: string;
+  assetIds: string[];
+}): Promise<number> {
+  const sb = getSupabase();
+  const assets = await getMediaAssetsByIds(input.assetIds);
+  if (assets.length === 0) return 0;
+
+  const existing = await getProductMedia(input.productId);
+  const attachedPaths = new Set(existing.map((m) => `${m.storageBucket}|${m.storagePath}`));
+  let position = existing.reduce((max, m) => Math.max(max, m.position), -1) + 1;
+  let primaryTaken = existing.some((m) => m.isPrimary);
+  let attached = 0;
+
+  for (const asset of assets) {
+    if (attachedPaths.has(`${asset.storageBucket}|${asset.storagePath}`)) continue;
+    const { error } = await sb.from("product_media").insert({
+      product_id: input.productId,
+      storage_bucket: asset.storageBucket,
+      storage_path: asset.storagePath,
+      asset_id: asset.id,
+      is_primary: !primaryTaken,
+      position,
+    });
+    if (error) fail("attach image", error);
+    position += 1;
+    primaryTaken = true;
+    attached += 1;
+  }
+  return attached;
+}
+
+/**
+ * Uploads a photo into the library and attaches it to the product's gallery.
+ *
+ * The library row is created first, so the object is reachable even if the
+ * attach fails — that is the whole point of indexing uploads. No compensating
+ * delete is needed here, unlike a bare object upload.
  */
 export async function uploadProductMedia(input: {
   tenantId: string;
@@ -1003,10 +1213,10 @@ export async function uploadProductMedia(input: {
   alt?: string | null;
 }): Promise<ProductMedia> {
   const sb = getSupabase();
-  const uploaded = await uploadTenantImage({
+  const asset = await uploadMediaAsset({
     tenantId: input.tenantId,
-    folder: input.productId,
     file: input.file,
+    alt: input.alt,
   });
 
   const existing = await getProductMedia(input.productId);
@@ -1016,34 +1226,51 @@ export async function uploadProductMedia(input: {
     .from("product_media")
     .insert({
       product_id: input.productId,
-      storage_bucket: uploaded.storageBucket,
-      storage_path: uploaded.storagePath,
-      alt_text: input.alt?.trim() || null,
+      storage_bucket: asset.storageBucket,
+      storage_path: asset.storagePath,
+      asset_id: asset.id,
       is_primary: existing.length === 0,
       position,
     })
     .select(MEDIA_COLUMNS)
     .single();
 
-  if (error) {
-    await sb.storage.from(uploaded.storageBucket).remove([uploaded.storagePath]);
-    fail("attach photo", error);
-  }
+  if (error) fail("attach photo", error);
   const row = oneOf(data);
   if (!row) throw new Error("attach photo: no row returned");
   return mapProductMedia(row);
 }
 
-/** Removes the file and its row, then promotes a new primary if needed. */
+/**
+ * Removes the file and its row, then promotes a new primary if needed.
+ *
+ * The object may now be shared (one library asset can back several products),
+ * so the bytes are only deleted when the last reference goes away.
+ */
 export async function deleteProductMedia(media: ProductMedia): Promise<void> {
   const sb = getSupabase();
-  const { error: removeError } = await sb.storage
-    .from(media.storageBucket)
-    .remove([media.storagePath]);
-  if (removeError) fail("remove photo file", removeError);
+  const { count, error: countError } = await sb
+    .from("product_media")
+    .select("id", { count: "exact", head: true })
+    .eq("storage_bucket", media.storageBucket)
+    .eq("storage_path", media.storagePath);
+  if (countError) fail("check photo usage", countError);
 
   const { error } = await sb.from("product_media").delete().eq("id", media.id);
   if (error) fail("remove photo", error);
+
+  if ((count ?? 0) <= 1) {
+    const { error: removeError } = await sb.storage
+      .from(media.storageBucket)
+      .remove([media.storagePath]);
+    if (removeError) fail("remove photo file", removeError);
+    const { error: assetError } = await sb
+      .from("media_assets")
+      .delete()
+      .eq("storage_bucket", media.storageBucket)
+      .eq("storage_path", media.storagePath);
+    if (assetError) fail("remove media asset", assetError);
+  }
 
   if (media.isPrimary) {
     const remaining = await getProductMedia(media.productId);

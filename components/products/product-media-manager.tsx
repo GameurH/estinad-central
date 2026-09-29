@@ -1,20 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, FolderOpen, Star, Trash2 } from "lucide-react";
 import { MediaDropZone } from "@/components/media/media-drop-zone";
+import { MediaFilterBar } from "@/components/media/media-filter-bar";
 import { MediaGrid } from "@/components/media/media-grid";
+import { MediaPicker } from "@/components/media/media-picker";
 import { MediaUploadButton } from "@/components/media/media-upload-button";
 import { useMediaUpload } from "@/components/media/media-upload";
+import { useTenantMediaLibrary } from "@/components/media/use-media-library";
 import { useLanguage } from "@/components/providers/language-provider";
 import { useToast } from "@/components/providers/toast-provider";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ui/states";
-import type { ProductMedia } from "@/lib/domain";
+import type { MediaItem, ProductMedia } from "@/lib/domain";
 import {
+  attachAssetsToProduct,
   deleteProductMedia,
   getProductMedia,
   reorderProductMedia,
@@ -53,9 +58,9 @@ function TileButton({
  * Storage objects. The storefront reads this list first, so the primary photo
  * and the order set here are what customers see.
  *
- * Only the product-specific parts live here (primary/reorder/delete, the
- * product-scoped source); the grid, drop zone and upload pipeline come from
- * `components/media`.
+ * Photos come from the tenant's media library: uploading here files the asset
+ * in the library and attaches it, and "Médiathèque" attaches images that are
+ * already uploaded — so nothing becomes an unreachable object.
  */
 export function ProductMediaManager({
   tenantId,
@@ -70,6 +75,17 @@ export function ProductMediaManager({
   const [failed, setFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<ProductMedia | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+
+  const library = useTenantMediaLibrary(tenantId, libraryOpen);
+  const { setSearch: setLibrarySearch } = library;
+
+  // Debounced so typing in the search box does not query per keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setLibrarySearch(searchInput), 250);
+    return () => clearTimeout(id);
+  }, [searchInput, setLibrarySearch]);
 
   const refresh = useCallback(async () => {
     try {
@@ -89,6 +105,23 @@ export function ProductMediaManager({
     // Re-read instead of appending: the server decides primary/position.
     await refresh();
   });
+
+  const attachFromLibrary = async (assets: MediaItem[]) => {
+    setBusyId("attach");
+    try {
+      const added = await attachAssetsToProduct({
+        tenantId,
+        productId,
+        assetIds: assets.map((asset) => asset.id),
+      });
+      if (added === 0) toast(t("media_already_attached"));
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t("error_title"), "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const makePrimary = async (media: ProductMedia) => {
     if (media.isPrimary || busyId !== null) return;
@@ -150,7 +183,15 @@ export function ProductMediaManager({
       >
         {(dragging) => (
           <>
-            <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                size="sm"
+                icon={<FolderOpen className="h-4 w-4" />}
+                disabled={locked}
+                onClick={() => setLibraryOpen(true)}
+              >
+                {t("media_library")}
+              </Button>
               <MediaUploadButton
                 label={t("photo_add")}
                 loading={uploading}
@@ -238,6 +279,37 @@ export function ProductMediaManager({
           </>
         )}
       </MediaDropZone>
+
+      <MediaPicker
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        multiple
+        onConfirm={(assets) => void attachFromLibrary(assets)}
+        library={{
+          items: library.items,
+          isLoading: library.isLoading,
+          error: library.error,
+          onRefresh: library.onRefresh,
+          // Uploading from here also attaches to this product.
+          onUpload: async (file) => {
+            await uploadProductMedia({ tenantId, productId, file });
+          },
+        }}
+        filters={
+          <MediaFilterBar
+            folders={library.folders}
+            tags={library.tags}
+            folder={library.folder}
+            tag={library.tag}
+            favoritesOnly={library.favoritesOnly}
+            search={searchInput}
+            onFolder={library.setFolder}
+            onTag={library.setTag}
+            onFavorites={library.setFavoritesOnly}
+            onSearch={setSearchInput}
+          />
+        }
+      />
 
       <ConfirmDialog
         open={removing !== null}
