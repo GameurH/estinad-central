@@ -18,6 +18,7 @@ import {
   createVariant,
   deleteProduct,
   deleteVariant,
+  getProductMedia,
   getVariantName,
   saveProductTranslations,
   updateProduct,
@@ -459,6 +460,15 @@ export function ProductForm({
                   dir={descLang === "ar" ? "rtl" : "ltr"}
                   ariaLabel={t("long_description")}
                   placeholder={t("long_description_hint")}
+                  loadImages={
+                    productId
+                      ? async () =>
+                          (await getProductMedia(productId)).map((media) => ({
+                            url: media.url,
+                            label: media.altText || draft.name,
+                          }))
+                      : undefined
+                  }
                 />
               </div>
             </Card>

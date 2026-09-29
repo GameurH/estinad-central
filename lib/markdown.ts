@@ -6,8 +6,10 @@
  * - a deliberately small block parser used by the live preview.
  *
  * Only the subset the toolbar can produce is understood, so what the merchant
- * previews is exactly what the storefront renders. No HTML is ever generated,
- * which keeps the stored copy XSS-free by construction.
+ * previews is exactly what the storefront renders: headings, lists, quotes,
+ * bold/italic/code, links and images (`![alt](url)`). No HTML is ever
+ * generated, and the link/image URL patterns only accept `https?://` or
+ * site-relative paths, so stored copy stays XSS-free by construction.
  */
 
 export interface MdEdit {
@@ -135,6 +137,29 @@ export function insertLink(value: string, start: number, end: number): MdEdit {
     text: value.slice(0, start) + snippet + value.slice(end),
     selectionStart: start + label.length + 3,
     selectionEnd: start + label.length + 3 + url.length,
+  };
+}
+
+/**
+ * Turns the selection into `![alt](url)`.
+ *
+ * With no `url` the placeholder `https://` is inserted and selected, so the
+ * merchant can paste a link; the picker passes a real URL instead.
+ */
+export function insertImage(
+  value: string,
+  start: number,
+  end: number,
+  url = "https://",
+  alt = "",
+): MdEdit {
+  const label = value.slice(start, end) || alt || "image";
+  const snippet = `![${label}](${url})`;
+  const urlStart = start + label.length + 4;
+  return {
+    text: value.slice(0, start) + snippet + value.slice(end),
+    selectionStart: urlStart,
+    selectionEnd: urlStart + url.length,
   };
 }
 
