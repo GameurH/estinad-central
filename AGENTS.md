@@ -39,7 +39,12 @@ npx tsc --noEmit     # type check (there is no `typecheck` script)
 
 **There is no test runner in this project.** Verification means
 `npx tsc --noEmit` + `npx eslint .` + `npm run build`. Never claim a change
-works without at least those three.
+works without at least those three. `npm run verify:markdown` additionally
+renders the long-description markdown path through `react-dom/server`.
+
+**Always push.** After a verified change, commit it with a conventional scoped
+message (`feat(scope):` / `fix(scope):`) and push to `origin` on the current
+branch. Do not leave finished work uncommitted in the tree.
 
 ## Layout
 
@@ -95,7 +100,16 @@ Project ref `zhfietudqhbjuqjqfvpa` (`eu-central-1`). Credentials come from
 Tables in play: `products`, `categories`, `variants`, `product_translations`,
 `category_translations`, `variant_translations`, `orders` + `order_lines`,
 `online_orders` + `online_order_items`, `tenants`, `tenant_owners`,
-`languages`, `product_media`, `customers` + `customer_addresses`.
+`languages`, `product_media`, `media_assets`, `customers` +
+`customer_addresses`.
+
+Media model (migration `create_media_library`): `media_assets` is the tenant
+library — one row per uploaded object, plus `folder`, `tags text[]`,
+`is_favorite`. `product_media` is the attachment layer the storefront reads
+(`storage_bucket` + `storage_path` + `position` + `is_primary`); it links to the
+library through the nullable `asset_id`, so one asset can back several products.
+Uploads land in `<tenant_id>/library/<folder>/…`; older objects keep their
+`<tenant_id>/<product_id>/…` paths and are never moved.
 
 Things that have bitten before:
 
