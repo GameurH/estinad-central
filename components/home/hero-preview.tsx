@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Monitor, Smartphone } from "lucide-react";
+import { Maximize2, Monitor, Smartphone } from "lucide-react";
 import { useLanguage } from "@/components/providers/language-provider";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import type { HeroSection } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
@@ -27,13 +28,14 @@ const GOLD = "#C8A24A";
 const SUPPORT_INK = "#3f352c";
 
 const H1_SIZE = "clamp(1.6rem, 1.1rem + 1.8vw, 2.6rem)";
+const H1_SIZE_LARGE = "clamp(2rem, 1.2rem + 2.6vw, 4rem)";
 
 /** Veil gradients, per breakpoint — source: honey-home.css .hh-hero-veil */
 const VEIL = {
   mobile:
-    `linear-gradient(180deg, rgb(248 245 238 / 0.78) 0%, rgb(248 245 238 / 0.40) 30%, transparent 50%)`,
+    "linear-gradient(180deg, rgb(248 245 238 / 0.78) 0%, rgb(248 245 238 / 0.40) 30%, transparent 50%)",
   desktop:
-    `linear-gradient(90deg, rgb(248 245 238 / 0.62) 0%, rgb(248 245 238 / 0.26) 36%, transparent 56%)`,
+    "linear-gradient(90deg, rgb(248 245 238 / 0.62) 0%, rgb(248 245 238 / 0.26) 36%, transparent 56%)",
 };
 
 function CopyLine({ value, placeholder }: { value: string; placeholder: string }) {
@@ -41,17 +43,102 @@ function CopyLine({ value, placeholder }: { value: string; placeholder: string }
   return <span className="italic opacity-45">{placeholder}</span>;
 }
 
-export function HeroPreview({ section }: { section: HeroSection }) {
+/** One rendered hero — shared by the side panel and the full-screen dialog. */
+function PreviewBody({
+  section,
+  lang,
+  device,
+  large = false,
+}: {
+  section: HeroSection;
+  lang: "fr" | "ar" | "en";
+  device: "desktop" | "mobile";
+  large?: boolean;
+}) {
   const { t } = useLanguage();
-  const [lang, setLang] = useState<"fr" | "ar" | "en">("fr");
-  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
-
   const copy = section[lang];
   const image = device === "desktop" ? section.images.desktop : section.images.mobile;
   const alt = section.images.alt[lang];
   const rtl = lang === "ar";
-
   const empty = (v: string) => v.trim() === "";
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[#231A15]"
+      dir={rtl ? "rtl" : "ltr"}
+      aria-label={t("hero_preview")}
+    >
+      <div className={cn("relative", device === "desktop" ? "aspect-[16/7]" : "aspect-[3/4]")}>
+        {/* Photo */}
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element -- merchant-authored URL, same rule as everywhere in central
+          <img src={image} alt={alt || ""} className="absolute inset-0 h-full w-full object-cover" />
+        ) : (
+          <div className="absolute inset-0 grid place-items-center">
+            <span className="text-xs text-[#F8F5EE]/60">{t("hero_preview_no_image")}</span>
+          </div>
+        )}
+        {/* Veil — matches the storefront's breakpoint gradient */}
+        <div className="absolute inset-0" style={{ background: VEIL[device] }} aria-hidden />
+
+        {/* Copy block — top-aligned like the storefront */}
+        <div
+          className={cn(
+            "absolute inset-x-0 top-0 flex flex-col gap-3 p-5",
+            rtl ? "items-start text-right" : "items-start",
+          )}
+        >
+          <h3
+            className={cn("m-0 max-w-[90%] text-balance", empty(copy.titleLead) && empty(copy.titleTail) && "opacity-45")}
+            style={{
+              color: CACAO,
+              fontSize: large ? H1_SIZE_LARGE : H1_SIZE,
+              lineHeight: rtl ? 1.34 : 1.06,
+              fontWeight: rtl ? 700 : 400,
+              letterSpacing: rtl ? 0 : "-0.018em",
+            }}
+          >
+            <span className="block">
+              <CopyLine value={copy.titleLead} placeholder={t("hero_title_lead")} />
+            </span>
+            <span className="block">
+              <CopyLine value={copy.titleTail} placeholder={t("hero_title_tail")} />
+            </span>
+          </h3>
+          <p
+            className={cn("m-0 max-w-[22rem]", empty(copy.support) && "opacity-45")}
+            style={{ color: SUPPORT_INK, fontSize: large ? "1.15rem" : "0.95rem", lineHeight: 1.75 }}
+          >
+            <CopyLine value={copy.support} placeholder={t("hero_support")} />
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-4">
+            {/* Primary: cacao bg / ivory text */}
+            <span
+              className="inline-flex min-h-10 items-center gap-2 rounded-md px-5 text-[0.9rem] font-medium"
+              style={{ background: CACAO, color: IVORY }}
+            >
+              <CopyLine value={copy.primaryCta} placeholder={t("hero_primary_cta")} />
+              <span aria-hidden>→</span>
+            </span>
+            {/* Secondary: inherited ink with gold underline */}
+            <span
+              className="text-[0.9rem] font-medium underline decoration-1 underline-offset-[0.55em]"
+              style={{ color: CACAO, textDecorationColor: GOLD }}
+            >
+              <CopyLine value={copy.secondaryCta} placeholder={t("hero_secondary_cta")} />
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function HeroPreview({ section }: { section: HeroSection }) {
+  const { t } = useLanguage();
+  const [lang, setLang] = useState<"fr" | "ar" | "en">("fr");
+  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  const [full, setFull] = useState(false);
 
   return (
     <div className="space-y-3">
@@ -87,79 +174,64 @@ export function HeroPreview({ section }: { section: HeroSection }) {
             aria-label={t("hero_image_mobile")}
             onClick={() => setDevice("mobile")}
           />
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Maximize2 className="h-4 w-4" />}
+            aria-label={t("hero_preview_full")}
+            onClick={() => setFull(true)}
+          />
         </div>
       </div>
 
-      <div
-        className="relative overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[#231A15]"
-        dir={rtl ? "rtl" : "ltr"}
-        aria-label={t("hero_preview")}
-      >
-        <div className={cn("relative", device === "desktop" ? "aspect-[16/7]" : "aspect-[3/4]")}>
-          {/* Photo */}
-          {image ? (
-            // eslint-disable-next-line @next/next/no-img-element -- merchant-authored URL, same rule as everywhere in central
-            <img src={image} alt={alt || ""} className="absolute inset-0 h-full w-full object-cover" />
-          ) : (
-            <div className="absolute inset-0 grid place-items-center">
-              <span className="text-xs text-[#F8F5EE]/60">{t("hero_preview_no_image")}</span>
-            </div>
-          )}
-          {/* Veil — matches the storefront's breakpoint gradient */}
-          <div className="absolute inset-0" style={{ background: VEIL[device] }} aria-hidden />
-
-          {/* Copy block — top-aligned like the storefront */}
-          <div
-            className={cn(
-              "absolute inset-x-0 top-0 flex flex-col gap-3 p-5",
-              rtl ? "items-start text-right" : "items-start",
-            )}
-          >
-            <h3
-              className={cn("m-0 max-w-[90%] text-balance", empty(copy.titleLead) && empty(copy.titleTail) && "opacity-45")}
-              style={{
-                color: CACAO,
-                fontSize: H1_SIZE,
-                lineHeight: rtl ? 1.34 : 1.06,
-                fontWeight: rtl ? 700 : 400,
-                letterSpacing: rtl ? 0 : "-0.018em",
-              }}
-            >
-              <span className="block">
-                <CopyLine value={copy.titleLead} placeholder={t("hero_title_lead")} />
-              </span>
-              <span className="block">
-                <CopyLine value={copy.titleTail} placeholder={t("hero_title_tail")} />
-              </span>
-            </h3>
-            <p
-              className={cn("m-0 max-w-[22rem]", empty(copy.support) && "opacity-45")}
-              style={{ color: SUPPORT_INK, fontSize: "0.95rem", lineHeight: 1.75 }}
-            >
-              <CopyLine value={copy.support} placeholder={t("hero_support")} />
-            </p>
-            <div className="mt-1 flex flex-wrap items-center gap-4">
-              {/* Primary: cacao bg / ivory text */}
-              <span
-                className="inline-flex min-h-10 items-center gap-2 rounded-md px-5 text-[0.9rem] font-medium"
-                style={{ background: CACAO, color: IVORY }}
-              >
-                <CopyLine value={copy.primaryCta} placeholder={t("hero_primary_cta")} />
-                <span aria-hidden>→</span>
-              </span>
-              {/* Secondary: inherited ink with gold underline */}
-              <span
-                className="text-[0.9rem] font-medium underline decoration-1 underline-offset-[0.55em]"
-                style={{ color: CACAO, textDecorationColor: GOLD }}
-              >
-                <CopyLine value={copy.secondaryCta} placeholder={t("hero_secondary_cta")} />
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PreviewBody section={section} lang={lang} device={device} />
 
       <p className="text-xs text-text-muted">{t("hero_preview_hint")}</p>
+
+      <Dialog
+        open={full}
+        onClose={() => setFull(false)}
+        title={t("hero_preview")}
+        full
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-1">
+              {(["fr", "ar", "en"] as const).map((code) => (
+                <Button
+                  key={code}
+                  size="sm"
+                  variant={lang === code ? "primary" : "ghost"}
+                  aria-pressed={lang === code}
+                  onClick={() => setLang(code)}
+                >
+                  {code.toUpperCase()}
+                </Button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant={device === "desktop" ? "primary" : "ghost"}
+                icon={<Monitor className="h-4 w-4" />}
+                aria-pressed={device === "desktop"}
+                aria-label={t("hero_image_desktop")}
+                onClick={() => setDevice("desktop")}
+              />
+              <Button
+                size="sm"
+                variant={device === "mobile" ? "primary" : "ghost"}
+                icon={<Smartphone className="h-4 w-4" />}
+                aria-pressed={device === "mobile"}
+                aria-label={t("hero_image_mobile")}
+                onClick={() => setDevice("mobile")}
+              />
+            </div>
+          </div>
+          <PreviewBody section={section} lang={lang} device={device} large />
+          <p className="text-xs text-text-muted">{t("hero_preview_hint")}</p>
+        </div>
+      </Dialog>
     </div>
   );
 }

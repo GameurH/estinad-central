@@ -144,7 +144,7 @@ export default function HeroEditorPage() {
 
       <Card>
         <CardHeader title={t("hero_headline")} />
-        <div className="space-y-4">
+        <div className="space-y-4 p-4">
           <Field label={t("hero_title_lead")}>
             <Input value={l.titleLead} onChange={(e) => update(lang, "titleLead", e.target.value)} />
           </Field>
@@ -159,7 +159,7 @@ export default function HeroEditorPage() {
 
       <Card>
         <CardHeader title={t("hero_ctas")} />
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 p-4 sm:grid-cols-2">
           <Field label={t("hero_primary_cta")}>
             <Input value={l.primaryCta} onChange={(e) => update(lang, "primaryCta", e.target.value)} />
           </Field>
@@ -185,34 +185,36 @@ export default function HeroEditorPage() {
 
       <Card>
         <CardHeader title={t("hero_images")} />
-        {current && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <MediaField
-              label={t("hero_image_desktop")}
-              value={section.images.desktop}
-              onChange={(url) => updateImage("desktop", url)}
-              loadLibrary={async () => ({ items: await getMediaAssets(current.id) })}
-              onUpload={async (file) => {
-                const uploaded = await uploadMediaAsset({ tenantId: current.id, folder: "hero", file });
-                return uploaded.url;
-              }}
-            />
-            <MediaField
-              label={t("hero_image_mobile")}
-              value={section.images.mobile}
-              onChange={(url) => updateImage("mobile", url)}
-              loadLibrary={async () => ({ items: await getMediaAssets(current.id) })}
-              onUpload={async (file) => {
-                const uploaded = await uploadMediaAsset({ tenantId: current.id, folder: "hero", file });
-                return uploaded.url;
-              }}
-            />
+        <div className="p-4">
+          {current && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <MediaField
+                label={t("hero_image_desktop")}
+                value={section.images.desktop}
+                onChange={(url) => updateImage("desktop", url)}
+                loadLibrary={async () => ({ items: await getMediaAssets(current.id) })}
+                onUpload={async (file) => {
+                  const uploaded = await uploadMediaAsset({ tenantId: current.id, folder: "hero", file });
+                  return uploaded.url;
+                }}
+              />
+              <MediaField
+                label={t("hero_image_mobile")}
+                value={section.images.mobile}
+                onChange={(url) => updateImage("mobile", url)}
+                loadLibrary={async () => ({ items: await getMediaAssets(current.id) })}
+                onUpload={async (file) => {
+                  const uploaded = await uploadMediaAsset({ tenantId: current.id, folder: "hero", file });
+                  return uploaded.url;
+                }}
+              />
+            </div>
+          )}
+          <div className="mt-4">
+            <Field label={`${t("hero_image_alt")} — ${lang.toUpperCase()}`}>
+              <Input value={section.images.alt[lang]} onChange={(e) => updateAlt(e.target.value)} />
+            </Field>
           </div>
-        )}
-        <div className="mt-4">
-          <Field label={`${t("hero_image_alt")} — ${lang.toUpperCase()}`}>
-            <Input value={section.images.alt[lang]} onChange={(e) => updateAlt(e.target.value)} />
-          </Field>
         </div>
       </Card>
         </div>

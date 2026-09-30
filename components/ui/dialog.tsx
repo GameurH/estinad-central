@@ -12,6 +12,7 @@ export function Dialog({
   description,
   children,
   wide = false,
+  full = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -19,6 +20,8 @@ export function Dialog({
   description?: string;
   children: ReactNode;
   wide?: boolean;
+  /** Near-viewport width for content previews. */
+  full?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -46,7 +49,7 @@ export function Dialog({
       <div
         className={cn(
           "animate-scale-in relative max-h-[85vh] w-full overflow-auto rounded-[var(--radius-lg)] border border-border bg-bg-secondary shadow-2xl",
-          wide ? "max-w-2xl" : "max-w-md",
+          full ? "max-w-6xl" : wide ? "max-w-2xl" : "max-w-md",
         )}
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
