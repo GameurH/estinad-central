@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Save } from "lucide-react";
 import { MediaField } from "@/components/media/media-field";
+import { HeroPreview } from "@/components/home/hero-preview";
 import { PageHeader } from "@/components/patterns/page-header";
 import { useLanguage, LANGUAGES } from "@/components/providers/language-provider";
 import { useTenant } from "@/components/providers/tenant-provider";
@@ -123,7 +124,9 @@ export default function HeroEditorPage() {
 
       <p className="max-w-2xl text-[13px] text-text-secondary">{t("hero_editor_note")}</p>
 
-      {/* Language tabs — copy and alt text are per language; images are shared */}
+      <div className="grid items-start gap-6 lg:grid-cols-[1fr_minmax(0,480px)]">
+        <div className="space-y-4">
+          {/* Language tabs — copy and alt text are per language; images are shared */}
       <div className="flex gap-1" role="tablist" aria-label={t("language")}>
         {LANGUAGES.map((x) => (
           <Button
@@ -212,6 +215,13 @@ export default function HeroEditorPage() {
           </Field>
         </div>
       </Card>
+        </div>
+
+        {/* Live preview — sticky on wide screens so edits and result stay in view together */}
+        <aside className="lg:sticky lg:top-20">
+          <HeroPreview section={section} />
+        </aside>
+      </div>
     </div>
   );
 }
