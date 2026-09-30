@@ -14,12 +14,24 @@ export function DataTable<T>({
   getRowId,
   onRowClick,
   empty,
+  selectable = false,
+  selectedIds,
+  onToggleRow,
+  onToggleAll,
 }: {
   columns: Column<T>[];
   rows: T[];
   getRowId?: (row: T, index: number) => string;
   onRowClick?: (row: T) => void;
   empty?: ReactNode;
+  /** Renders a leading checkbox column. */
+  selectable?: boolean;
+  /** Required when `selectable`. Ids of the currently selected rows. */
+  selectedIds?: ReadonlySet<string>;
+  /** Required when `selectable`. Called with the row id on checkbox click. */
+  onToggleRow?: (id: string) => void;
+  /** Required when `selectable`. Header checkbox — select / clear every row. */
+  onToggleAll?: () => void;
 }) {
   if (rows.length === 0 && empty) return <>{empty}</>;
 
@@ -29,11 +41,26 @@ export function DataTable<T>({
     return typeof maybe.id === "string" ? maybe.id : `row-${index}`;
   };
 
+  const allSelected = selectable
+    ? rows.length > 0 && rows.every((r, i) => selectedIds?.has(keyOf(r, i)) ?? false)
+    : false;
+
   return (
     <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-border bg-bg-secondary">
       <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
         <thead>
           <tr className="border-b border-border bg-bg-inset">
+            {selectable && (
+              <th scope="col" className="w-9 px-3 align-middle">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={onToggleAll}
+                  aria-label="Select all"
+                  className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
+                />
+              </th>
+            )}
             {columns.map((c) => (
               <th
                 key={c.key}
@@ -56,8 +83,21 @@ export function DataTable<T>({
               className={cn(
                 "transition-colors hover:bg-bg-surface/60",
                 onRowClick && "cursor-pointer",
+                selectable && selectedIds?.has(keyOf(row, index)) && "bg-accent-muted",
               )}
             >
+              {selectable && (
+                <td className="px-3 py-3 align-middle">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds?.has(keyOf(row, index)) ?? false}
+                    onChange={() => onToggleRow?.(keyOf(row, index))}
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
+                    aria-label={`Select row ${index + 1}`}
+                  />
+                </td>
+              )}
               {columns.map((c) => (
                 <td key={c.key} className={cn("px-4 py-3 align-middle", c.className)}>
                   {c.render(row)}
