@@ -22,6 +22,7 @@ import type {
   DailySales,
   DashboardSummary,
   HourlySales,
+  HeroSection,
   LangCode,
   Language,
   OnlineOrder,
@@ -2166,6 +2167,111 @@ export async function updateTenantSettings(
     })
     .eq("id", id);
   if (error) fail("save business settings", error);
+}
+
+/* ---------- Homepage content (hero) ---------- */
+
+/**
+ * The storefront homepage hero, stored as one `homepage_section_content` row
+ * (section_id = 'hero'). Absent row ⇒ the storefront keeps its built-in
+ * defaults, so saving this is always an override, never a requirement.
+ *
+ * Shape contract: content jsonb = HeroContent keys per language; images jsonb
+ * = { desktop, mobile, alt: {fr, ar, en} }. Keep in sync with lib/domain.ts.
+ */
+const HERO_SECTION_ID = "hero";
+
+function mapHeroSection(row: Row): HeroSection {
+  const lang = (code: "fr" | "ar" | "en") => {
+    const c = (row[`content_${code}`] ?? {}) as Record<string, unknown>;
+    const text = (k: string) => (typeof c[k] === "string" ? (c[k] as string) : "");
+    const href = (k: string) =>
+      typeof c[k] === "string" && c[k] !== "" ? (c[k] as string) : undefined;
+    return {
+      titleLead: text("titleLead"),
+      titleTail: text("titleTail"),
+      support: text("support"),
+      primaryCta: text("primaryCta"),
+      primaryHref: href("primaryHref"),
+      secondaryCta: text("secondaryCta"),
+      secondaryHref: href("secondaryHref"),
+    };
+  };
+  const img = (row.images ?? {}) as Record<string, unknown>;
+  const alt = (img.alt ?? {}) as Record<string, unknown>;
+  const s = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    tenantId: str(row.tenant_id),
+    fr: lang("fr"),
+    ar: lang("ar"),
+    en: lang("en"),
+    images: {
+      desktop: s(img.desktop),
+      mobile: s(img.mobile),
+      alt: { fr: s(alt.fr), ar: s(alt.ar), en: s(alt.en) },
+    },
+    updatedAt: row.updated_at == null ? null : str(row.updated_at),
+  };
+}
+
+export async function getHeroSection(tenantId: string): Promise<HeroSection | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("homepage_section_content")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("section_id", HERO_SECTION_ID)
+    .maybeSingle();
+  if (error) fail("load hero section", error);
+  return data ? mapHeroSection(oneOf(data)!) : null;
+}
+
+function heroLangJson(
+  lang: HeroSection["fr"],
+): Record<string, string | undefined> {
+  return {
+    titleLead: lang.titleLead.trim(),
+    titleTail: lang.titleTail.trim(),
+    support: lang.support.trim(),
+    primaryCta: lang.primaryCta.trim(),
+    primaryHref: lang.primaryHref?.trim() || undefined,
+    secondaryCta: lang.secondaryCta.trim(),
+    secondaryHref: lang.secondaryHref?.trim() || undefined,
+  };
+}
+
+/** Upserts the hero row for a tenant (unique on (tenant_id, section_id)). */
+export async function saveHeroSection(
+  tenantId: string,
+  section: Omit<HeroSection, "tenantId" | "updatedAt">,
+): Promise<HeroSection> {
+  const sb = getSupabase();
+  const payload = {
+    tenant_id: tenantId,
+    section_id: HERO_SECTION_ID,
+    content_fr: heroLangJson(section.fr),
+    content_ar: heroLangJson(section.ar),
+    content_en: heroLangJson(section.en),
+    images: {
+      desktop: section.images.desktop || undefined,
+      mobile: section.images.mobile || undefined,
+      alt: {
+        fr: section.images.alt.fr.trim(),
+        ar: section.images.alt.ar.trim(),
+        en: section.images.alt.en.trim(),
+      },
+    },
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await sb
+    .from("homepage_section_content")
+    .upsert(payload, { onConflict: "tenant_id,section_id" })
+    .select("*")
+    .single();
+  if (error) fail("save hero section", error);
+  const row = oneOf(data);
+  if (!row) throw new Error("save hero section: no row returned");
+  return mapHeroSection(row);
 }
 
 /* ---------- CSV export ---------- */

@@ -336,3 +336,45 @@ export interface DashboardSummary {
   activeOrders: number;
   lowStockCount: number;
 }
+
+/* ---------- Homepage content (hero) ---------- */
+
+/**
+ * Trilingual hero copy for the storefront homepage. Keys mirror the storefront
+ * `honeyHome.hero` message bundle so editing only overrides the defaults.
+ */
+export interface HeroContent {
+  titleLead: string;
+  titleTail: string;
+  support: string;
+  primaryCta: string;
+  primaryHref: string;
+  secondaryCta: string;
+  secondaryHref: string;
+}
+
+/** Hero imagery: one art-directed pair per storefront `<picture>`. */
+export interface HeroImages {
+  desktop: string;
+  mobile: string;
+  /** Alt text per language, mirroring the copy keys. */
+  alt: { fr: string; ar: string; en: string };
+}
+
+export interface HeroSection {
+  tenantId: string;
+  fr: Omit<HeroContent, "primaryHref" | "secondaryHref"> & {
+    primaryHref?: string;
+    secondaryHref?: string;
+  };
+  ar: Omit<HeroContent, "primaryHref" | "secondaryHref"> & {
+    primaryHref?: string;
+    secondaryHref?: string;
+  };
+  en: Omit<HeroContent, "primaryHref" | "secondaryHref"> & {
+    primaryHref?: string;
+    secondaryHref?: string;
+  };
+  images: HeroImages;
+  updatedAt: string | null;
+}

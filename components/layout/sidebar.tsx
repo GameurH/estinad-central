@@ -12,6 +12,7 @@ import {
   FileBarChart,
   Settings,
   LogOut,
+  Home,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Monogram } from "@/components/monogram";
@@ -24,6 +25,7 @@ const ITEMS = [
   { key: "products", href: "/products", icon: Package },
   { key: "categories", href: "/categories", icon: FolderTree },
   { key: "media_library", href: "/media", icon: Images },
+  { key: "hero_editor", href: "/home", icon: Home },
   { key: "reports", href: "/reports", icon: FileBarChart },
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;
