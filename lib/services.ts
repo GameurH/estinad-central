@@ -15,6 +15,7 @@
  */
 import { getSupabase } from "@/lib/supabase/client";
 import type {
+  AttributeKind,
   BrandConfig,
   Category,
   CategoryTranslation,
@@ -32,8 +33,11 @@ import type {
   PaymentMethod,
   PaymentStatus,
   Product,
+  ProductAttribute,
+  ProductAttributeValue,
   ProductMedia,
   ProductPerformance,
+  VariantTranslation,
   MediaAsset,
   ProductTranslation,
   ShippingStatus,
@@ -426,24 +430,61 @@ export async function getProduct(
     });
   }
 
-  const variants = rowsOf(vData).map(mapVariant);
-  const vIds = variants.map((v) => v.id);
-  if (vIds.length > 0) {
-    const { data: vtData, error: vtErr } = await sb
-      .from("variant_translations")
-      .select("variant_id,language_code,name")
-      .in("variant_id", vIds);
-    if (vtErr) fail("load variant translations", vtErr);
-    for (const v of variants) seedBase("variant", v.id, v.name);
-    for (const t of rowsOf(vtData)) {
-      putTr("variant", str(t.variant_id), str(t.language_code), str(t.name));
-    }
-  }
+  const variants = await attachVariantTranslations(rowsOf(vData).map(mapVariant));
 
   return { ...product, variants, translations };
 }
 
+/**
+ * Loads `variant_translations` for these variants, seeds the synchronous name
+ * cache (`getVariantName`) and attaches the rows to each variant.
+ */
+async function attachVariantTranslations(variants: Variant[]): Promise<Variant[]> {
+  if (variants.length === 0) return variants;
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("variant_translations")
+    .select("variant_id,language_code,name")
+    .in("variant_id", variants.map((v) => v.id));
+  if (error) fail("load variant translations", error);
+
+  const byVariant = new Map<string, VariantTranslation[]>();
+  for (const t of rowsOf(data)) {
+    const translation = {
+      variantId: str(t.variant_id),
+      languageCode: asLangCode(t.language_code),
+      name: str(t.name),
+    };
+    putTr("variant", translation.variantId, str(t.language_code), translation.name);
+    if (!translation.languageCode) continue;
+    const list = byVariant.get(translation.variantId) ?? [];
+    list.push({ ...translation, languageCode: translation.languageCode });
+    byVariant.set(translation.variantId, list);
+  }
+  for (const v of variants) v.translations = byVariant.get(v.id) ?? [];
+  return variants;
+}
+
+/** One product's variants with their translations — the variant editor's source. */
+export async function getVariants(productId: string): Promise<Variant[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("variants")
+    .select("*")
+    .eq("product_id", productId)
+    .order("name");
+  if (error) fail("load variants", error);
+  return attachVariantTranslations(rowsOf(data).map(mapVariant));
+}
+
 function mapVariant(r: Row): Variant {
+  const rawAttributes = r.attribute_values;
+  const attributeValues: Record<string, string> = {};
+  if (rawAttributes && typeof rawAttributes === "object" && !Array.isArray(rawAttributes)) {
+    for (const [key, value] of Object.entries(rawAttributes as Record<string, unknown>)) {
+      if (typeof value === "string" && value) attributeValues[key] = value;
+    }
+  }
   return {
     id: str(r.id),
     tenantId: str(r.tenant_id),
@@ -452,6 +493,14 @@ function mapVariant(r: Row): Variant {
     priceMod: num(r.price_mod),
     sku: strOrNull(r.sku),
     barcode: strOrNull(r.barcode),
+    image: strOrNull(r.image),
+    isAvailable: r.is_available == null ? true : bool(r.is_available, true),
+    trackStock: bool(r.track_stock),
+    weight: r.weight == null ? null : num(r.weight),
+    weightUnit: strOrNull(r.weight_unit),
+    color: strOrNull(r.color),
+    colorHex: strOrNull(r.color_hex),
+    attributeValues,
   };
 }
 
@@ -635,8 +684,8 @@ export async function updateProduct(
  * the same language would violate the `(owner, language_code)` unique key.
  */
 async function storedLanguageCodes(
-  table: "product_translations" | "category_translations",
-  column: "product_id" | "category_id",
+  table: "product_translations" | "category_translations" | "variant_translations",
+  column: "product_id" | "category_id" | "variant_id",
   id: string,
 ): Promise<Map<LangCode, string>> {
   const sb = getSupabase();
@@ -717,6 +766,51 @@ export interface CategoryTranslationInput {
 }
 
 /**
+ * Upserts per-language names for any table shaped `(owner_id, language_code, name)`
+ * — categories and variants today, products later.
+ *
+ * A blank field stores the base name (`name` is NOT NULL in these tables), and a
+ * row is only created for a name that actually differs from the base.
+ */
+async function upsertNameTranslations(
+  table: "category_translations" | "variant_translations",
+  column: "category_id" | "variant_id",
+  ownerId: string,
+  baseName: string,
+  entries: CategoryTranslationInput[],
+  label: string,
+): Promise<void> {
+  if (entries.length === 0) return;
+  const sb = getSupabase();
+  const stored = await storedLanguageCodes(table, column, ownerId);
+  const base = baseName.trim() || "—";
+  const now = new Date().toISOString();
+
+  for (const entry of entries) {
+    const name = entry.name?.trim() || null;
+    const raw = stored.get(entry.languageCode);
+
+    if (raw) {
+      const { error } = await sb
+        .from(table)
+        .update({ updated_at: now, name: name ?? base })
+        .eq(column, ownerId)
+        .eq("language_code", raw);
+      if (error) fail(`save ${label} translation`, error);
+      continue;
+    }
+
+    if (name === null || name === base) continue;
+    const { error } = await sb.from(table).insert({
+      [column]: ownerId,
+      language_code: entry.languageCode,
+      name,
+    });
+    if (error) fail(`save ${label} translation`, error);
+  }
+}
+
+/**
  * Upserts per-language category names in `category_translations`, with the same
  * rules as products: a blank field stores the base name (`name` is NOT NULL),
  * and a row is only created for a name that differs from it.
@@ -726,36 +820,14 @@ export async function saveCategoryTranslations(
   baseName: string,
   entries: CategoryTranslationInput[],
 ): Promise<void> {
-  if (entries.length === 0) return;
-  const sb = getSupabase();
-  const stored = await storedLanguageCodes("category_translations", "category_id", categoryId);
-  const base = baseName.trim() || "—";
-  const now = new Date().toISOString();
-
-  for (const entry of entries) {
-    const name = entry.name?.trim() || null;
-    const raw = stored.get(entry.languageCode);
-
-    if (raw) {
-      const patch: Record<string, unknown> = { updated_at: now };
-      patch.name = name ?? base;
-      const { error } = await sb
-        .from("category_translations")
-        .update(patch)
-        .eq("category_id", categoryId)
-        .eq("language_code", raw);
-      if (error) fail("save category translation", error);
-      continue;
-    }
-
-    if (name === null || name === base) continue;
-    const { error } = await sb.from("category_translations").insert({
-      category_id: categoryId,
-      language_code: entry.languageCode,
-      name,
-    });
-    if (error) fail("save category translation", error);
-  }
+  await upsertNameTranslations(
+    "category_translations",
+    "category_id",
+    categoryId,
+    baseName,
+    entries,
+    "category",
+  );
 }
 
 export async function deleteProduct(id: string): Promise<void> {
@@ -769,20 +841,156 @@ export async function deleteProduct(id: string): Promise<void> {
   }
 }
 
+/**
+ * Bulk availability update — one UPDATE ... in (ids), tenant-scoped so the
+ * caller cannot touch another tenant's rows even if the RLS guard rail slips.
+ */
+export async function bulkSetProductsAvailability(
+  tenantId: string,
+  ids: string[],
+  isAvailable: boolean,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("products")
+    .update({ is_available: isAvailable })
+    .eq("tenant_id", tenantId)
+    .in("id", ids);
+  if (error) fail("bulk set product availability", error);
+}
+
+/**
+ * Bulk category move. Callers pass only ids that belong to the tenant; the
+ * extra `tenant_id` clause turns that assumption into a guard rail.
+ */
+export async function bulkMoveProductsToCategory(
+  tenantId: string,
+  ids: string[],
+  categoryId: string | null,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("products")
+    .update({ category_id: categoryId })
+    .eq("tenant_id", tenantId)
+    .in("id", ids);
+  if (error) fail("bulk move products to category", error);
+}
+
+/**
+ * Bulk delete with per-item result: one blocked id (product used by an order —
+ * FK 23503) must not hide the fate of the others, which a single statement
+ * delete would (it fails all-or-nothing). Blocked ids come back so the caller
+ * can name them.
+ */
+export async function bulkDeleteProducts(
+  tenantId: string,
+  ids: string[],
+): Promise<{ deleted: string[]; blocked: string[] }> {
+  const sb = getSupabase();
+  const deleted: string[] = [];
+  const blocked: string[] = [];
+
+  // Independent deletes in parallel; results are order-independent.
+  await Promise.all(
+    ids.map(async (id) => {
+      const { error } = await sb
+        .from("products")
+        .delete()
+        .eq("id", id)
+        .eq("tenant_id", tenantId);
+      if (error) blocked.push(id);
+      else deleted.push(id);
+    }),
+  );
+  return { deleted, blocked };
+}
+
+/** Fields central can write on a variant (names map to the DB columns). */
+export type VariantPatch = Partial<{
+  name: string;
+  priceMod: number;
+  sku: string | null;
+  barcode: string | null;
+  image: string | null;
+  isAvailable: boolean;
+  trackStock: boolean;
+  weight: number | null;
+  weightUnit: string | null;
+  color: string | null;
+  colorHex: string | null;
+  /** Option values, e.g. `{ "Poids": "500g" }`. */
+  attributeValues: Record<string, string>;
+}>;
+
+function variantPatchRow(patch: VariantPatch): Record<string, unknown> {
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.name !== undefined) row.name = patch.name.trim();
+  if (patch.priceMod !== undefined) row.price_mod = patch.priceMod;
+  if (patch.sku !== undefined) row.sku = patch.sku?.trim() || null;
+  if (patch.barcode !== undefined) row.barcode = patch.barcode?.trim() || null;
+  if (patch.image !== undefined) row.image = patch.image?.trim() || null;
+  if (patch.isAvailable !== undefined) row.is_available = patch.isAvailable;
+  if (patch.trackStock !== undefined) row.track_stock = patch.trackStock;
+  if (patch.weight !== undefined) row.weight = patch.weight;
+  if (patch.weightUnit !== undefined) row.weight_unit = patch.weightUnit?.trim() || null;
+  if (patch.color !== undefined) row.color = patch.color?.trim() || null;
+  if (patch.colorHex !== undefined) row.color_hex = patch.colorHex?.trim() || null;
+  if (patch.attributeValues !== undefined) row.attribute_values = patch.attributeValues;
+  return row;
+}
+
+/** Case-insensitive name check, so the 18 existing duplicates don't multiply. */
+async function variantNameExists(
+  productId: string,
+  name: string,
+  exceptId?: string,
+): Promise<boolean> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("variants")
+    .select("id,name")
+    .eq("product_id", productId);
+  if (error) fail("check variant name", error);
+  const wanted = name.trim().toLowerCase();
+  return rowsOf(data).some(
+    (r) => str(r.id) !== exceptId && str(r.name).trim().toLowerCase() === wanted,
+  );
+}
+
+/**
+ * Stable identity for "the same variant": its option values when it has any,
+ * else its name. Used so generating a matrix twice is a no-op.
+ */
+function variantSignature(name: string, attributeValues: unknown): string {
+  const entries =
+    attributeValues && typeof attributeValues === "object"
+      ? Object.entries(attributeValues as Record<string, unknown>)
+          .filter(([, value]) => typeof value === "string" && value)
+          .sort(([a], [b]) => a.localeCompare(b))
+      : [];
+  if (entries.length === 0) return `name:${name.trim().toLowerCase()}`;
+  return `attrs:${entries.map(([k, v]) => `${k}=${String(v)}`).join("|").toLowerCase()}`;
+}
+
 export async function createVariant(input: {
   tenantId: string;
   productId: string;
   name: string;
   priceMod: number;
-}): Promise<Variant> {
+} & VariantPatch): Promise<Variant> {
   const sb = getSupabase();
+  const name = input.name.trim();
+  if (!name) throw new Error("a variant needs a name");
+  if (await variantNameExists(input.productId, name)) {
+    throw new Error(`a variant named “${name}” already exists on this product`);
+  }
   const { data, error } = await sb
     .from("variants")
     .insert({
       tenant_id: input.tenantId,
       product_id: input.productId,
-      name: input.name.trim(),
-      price_mod: input.priceMod,
+      ...variantPatchRow({ ...input, name, isAvailable: input.isAvailable ?? true }),
     })
     .select("*")
     .single();
@@ -790,6 +998,209 @@ export async function createVariant(input: {
   const row = oneOf(data);
   if (!row) throw new Error("create variant: no row returned");
   return mapVariant(row);
+}
+
+export async function updateVariant(id: string, patch: VariantPatch): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("variants").update(variantPatchRow(patch)).eq("id", id);
+  if (error) fail("update variant", error);
+}
+
+/** One patch across many variants — bulk price, availability or options. */
+export async function bulkUpdateVariants(ids: string[], patch: VariantPatch): Promise<void> {
+  if (ids.length === 0) return;
+  const sb = getSupabase();
+  const { error } = await sb.from("variants").update(variantPatchRow(patch)).in("id", ids);
+  if (error) fail("update variants", error);
+}
+
+/**
+ * Upserts per-language variant names in `variant_translations`.
+ *
+ * Same rules as products and categories: the base name stays on the variant, a
+ * blank field stores the base name (`name` is NOT NULL there), and a row is only
+ * created for a name that actually differs.
+ */
+export async function saveVariantTranslations(
+  variantId: string,
+  baseName: string,
+  entries: { languageCode: LangCode; name: string | null }[],
+): Promise<void> {
+  await upsertNameTranslations(
+    "variant_translations",
+    "variant_id",
+    variantId,
+    baseName,
+    entries,
+    "variant",
+  );
+}
+
+/**
+ * Creates variants for a set of option combinations, skipping any that already
+ * exist (matched on option values, or on the name for flat variants).
+ *
+ * Inserts directly rather than through `createVariant`: the name guard would
+ * reject a combination whose name already exists, which is exactly the case
+ * this is meant to fill in.
+ */
+export async function generateVariants(input: {
+  tenantId: string;
+  productId: string;
+  rows: { name: string; attributeValues: Record<string, string>; priceMod?: number }[];
+}): Promise<number> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("variants")
+    .select("name,attribute_values")
+    .eq("product_id", input.productId);
+  if (error) fail("load variants", error);
+
+  const existing = new Set(
+    rowsOf(data).map((r) => variantSignature(str(r.name), r.attribute_values)),
+  );
+
+  let created = 0;
+  for (const row of input.rows) {
+    const signature = variantSignature(row.name, row.attributeValues);
+    if (existing.has(signature)) continue;
+    const { error: insertError } = await sb.from("variants").insert({
+      tenant_id: input.tenantId,
+      product_id: input.productId,
+      ...variantPatchRow({
+        name: row.name,
+        priceMod: row.priceMod ?? 0,
+        isAvailable: true,
+        attributeValues: row.attributeValues,
+      }),
+    });
+    if (insertError) fail("generate variants", insertError);
+    existing.add(signature);
+    created += 1;
+  }
+  return created;
+}
+
+/* ---------- Tenant option vocabulary (variant matrices) ---------- */
+
+/**
+ * The tenant's options and their values.
+ *
+ * `product_attributes` has no product column, so options are shared across
+ * every product — a product's matrix is the subset its variants use.
+ * `product_attributes.values` (jsonb) is left alone: the normalised
+ * `product_attribute_values` table is the source of truth here.
+ */
+export async function getProductAttributes(tenantId: string): Promise<ProductAttribute[]> {
+  const sb = getSupabase();
+  const [attributeRes, valueRes] = await Promise.all([
+    sb
+      .from("product_attributes")
+      .select("id,tenant_id,name,type,sort_order")
+      .eq("tenant_id", tenantId)
+      .order("sort_order"),
+    sb
+      .from("product_attribute_values")
+      .select("id,attribute_id,value,color_hex,sort_order")
+      .eq("tenant_id", tenantId)
+      .order("sort_order"),
+  ]);
+  if (attributeRes.error) fail("load product attributes", attributeRes.error);
+  if (valueRes.error) fail("load attribute values", valueRes.error);
+
+  const valuesByAttribute = new Map<string, ProductAttributeValue[]>();
+  for (const v of rowsOf(valueRes.data)) {
+    const attributeId = str(v.attribute_id);
+    const list = valuesByAttribute.get(attributeId) ?? [];
+    list.push({
+      id: str(v.id),
+      attributeId,
+      value: str(v.value),
+      colorHex: strOrNull(v.color_hex),
+    });
+    valuesByAttribute.set(attributeId, list);
+  }
+
+  return rowsOf(attributeRes.data).map((a) => ({
+    id: str(a.id),
+    tenantId: str(a.tenant_id),
+    name: str(a.name),
+    type: str(a.type) === "color" ? "color" : "select",
+    values: valuesByAttribute.get(str(a.id)) ?? [],
+  }));
+}
+
+export async function createProductAttribute(input: {
+  tenantId: string;
+  name: string;
+  type: AttributeKind;
+}): Promise<ProductAttribute> {
+  const sb = getSupabase();
+  const name = input.name.trim();
+  if (!name) throw new Error("an option needs a name");
+  const { data, error } = await sb
+    .from("product_attributes")
+    .insert({ tenant_id: input.tenantId, name, type: input.type, values: [] })
+    .select("id,tenant_id,name,type")
+    .single();
+  if (error) fail("create option", error);
+  const row = oneOf(data);
+  if (!row) throw new Error("create option: no row returned");
+  return {
+    id: str(row.id),
+    tenantId: str(row.tenant_id),
+    name: str(row.name),
+    type: str(row.type) === "color" ? "color" : "select",
+    values: [],
+  };
+}
+
+export async function createAttributeValue(input: {
+  tenantId: string;
+  attributeId: string;
+  value: string;
+  colorHex?: string | null;
+}): Promise<ProductAttributeValue> {
+  const sb = getSupabase();
+  const value = input.value.trim();
+  if (!value) throw new Error("an option value needs a name");
+  const { data, error } = await sb
+    .from("product_attribute_values")
+    .insert({
+      tenant_id: input.tenantId,
+      attribute_id: input.attributeId,
+      value,
+      color_hex: input.colorHex?.trim() || null,
+    })
+    .select("id,attribute_id,value,color_hex")
+    .single();
+  if (error) fail("create option value", error);
+  const row = oneOf(data);
+  if (!row) throw new Error("create option value: no row returned");
+  return {
+    id: str(row.id),
+    attributeId: str(row.attribute_id),
+    value: str(row.value),
+    colorHex: strOrNull(row.color_hex),
+  };
+}
+
+export async function deleteAttributeValue(id: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("product_attribute_values").delete().eq("id", id);
+  if (error) fail("delete option value", error);
+}
+
+export async function deleteProductAttribute(id: string): Promise<void> {
+  const sb = getSupabase();
+  // Values first: the child FK is NO ACTION, like the other child tables here.
+  const { error: valueError } = await sb
+    .from("product_attribute_values")
+    .delete()
+    .eq("attribute_id", id);
+  if (valueError) fail("delete option values", valueError);
+  const { error } = await sb.from("product_attributes").delete().eq("id", id);
+  if (error) fail("delete option", error);
 }
 
 export async function deleteVariant(id: string): Promise<void> {

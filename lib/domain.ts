@@ -153,9 +153,47 @@ export interface Variant {
   tenantId: string;
   productId: string;
   name: string;
+  /** Final price = `Product.price` + this modifier. */
   priceMod: number;
   sku: string | null;
   barcode: string | null;
+  /** Image for this variant; falls back to the product gallery when null. */
+  image: string | null;
+  isAvailable: boolean;
+  trackStock: boolean;
+  weight: number | null;
+  weightUnit: string | null;
+  color: string | null;
+  /** Swatch colour (hex) when the option is a colour. */
+  colorHex: string | null;
+  /** Option values, e.g. `{ "Poids": "500g" }`. Empty for flat variants. */
+  attributeValues: Record<string, string>;
+  /** `variant_translations` rows, when the caller loaded them. */
+  translations?: VariantTranslation[];
+}
+
+export type AttributeKind = "select" | "color";
+
+/**
+ * A tenant-level option used to build variant matrices ("Poids", "Couleur").
+ *
+ * Shared across every product of the tenant — `product_attributes` has no
+ * product column — so the manager in the product form edits the tenant's option
+ * vocabulary, not a per-product one.
+ */
+export interface ProductAttribute {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: AttributeKind;
+  values: ProductAttributeValue[];
+}
+
+export interface ProductAttributeValue {
+  id: string;
+  attributeId: string;
+  value: string;
+  colorHex: string | null;
 }
 
 export interface VariantTranslation {

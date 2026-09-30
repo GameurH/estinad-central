@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { LanguageTabs } from "@/components/ui/language-tabs";
 import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { ProductMediaManager } from "@/components/products/product-media-manager";
+import { VariantEditor } from "@/components/products/variant-editor";
 import { useLanguage } from "@/components/providers/language-provider";
 import { useToast } from "@/components/providers/toast-provider";
 import {
@@ -278,6 +279,14 @@ export function ProductForm({
           priceMod: mod,
           sku: null,
           barcode: null,
+          image: null,
+          isAvailable: true,
+          trackStock: false,
+          weight: null,
+          weightUnit: null,
+          color: null,
+          colorHex: null,
+          attributeValues: {},
         },
       ]);
       setVariantName("");
@@ -539,7 +548,17 @@ export function ProductForm({
         </div>
       )}
 
-      {tab === "variants" && (
+      {tab === "variants" && productId && (
+        <VariantEditor
+          tenantId={tenantId}
+          productId={productId}
+          basePrice={draft.price}
+          variants={localVariants}
+          onChange={setLocalVariants}
+        />
+      )}
+
+      {tab === "variants" && !productId && (
         <Card className="animate-fade-in">
           <CardHeader
             title={t("variants")}
