@@ -310,6 +310,11 @@ function mapProduct(r: Row): Product {
   const images = Array.isArray(r.images)
     ? (r.images as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
+  // Display image: the mirrored gallery first (`images[0]` is the primary media
+  // URL), then `products.image` only when it really is a URL — the POS sync
+  // stores a bare filename there for some products.
+  const legacyImage = strOrNull(r.image);
+  const legacyImageIsUrl = legacyImage !== null && /^(https?:\/\/|\/)/.test(legacyImage);
   return {
     id: str(r.id),
     tenantId: str(r.tenant_id),
@@ -321,7 +326,7 @@ function mapProduct(r: Row): Product {
     sku: strOrNull(r.sku),
     barcode: strOrNull(r.barcode),
     isAvailable: r.is_available == null ? true : bool(r.is_available, true),
-    image: strOrNull(r.image) ?? (images[0] ?? null),
+    image: images[0] ?? (legacyImageIsUrl ? legacyImage : null),
     images,
     printerDest,
     shortDescription: strOrNull(r.short_description),

@@ -70,8 +70,13 @@ export interface Product {
   sku: string | null;
   barcode: string | null;
   isAvailable: boolean;
+  /**
+   * Best display URL: the gallery's primary image, else a legacy URL.
+   * Never a bare filename — the POS stores those in `products.image` for some
+   * products and they cannot be rendered.
+   */
   image: string | null;
-  /** Legacy RMS image URLs. Products with uploaded media use `product_media` instead. */
+  /** Mirrored gallery URLs, then any legacy URLs pointing at other hosts. */
   images: string[];
   printerDest: PrinterDest;
   shortDescription: string | null;

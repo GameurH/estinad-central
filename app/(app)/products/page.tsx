@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, ImageOff } from "lucide-react";
 import { useTenant } from "@/components/providers/tenant-provider";
 import { useLanguage } from "@/components/providers/language-provider";
 import { PageHeader } from "@/components/patterns/page-header";
@@ -29,6 +29,26 @@ import { formatCurrency } from "@/lib/format";
 import type { Category } from "@/lib/domain";
 
 const PAGE_SIZE = 12;
+
+/**
+ * Row thumbnail.
+ *
+ * A plain `<img>`, not `next/image`: URLs come from the gallery *and* from
+ * legacy/foreign hosts, and `next/image` throws for a host that is not listed
+ * in `images.remotePatterns` — one pasted URL would blank the whole list.
+ */
+function ProductThumb({ src, alt }: { src: string | null; alt: string }) {
+  return (
+    <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[var(--radius-sm)] border border-border bg-bg-inset">
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- see note above
+        <img src={src} alt={alt} loading="lazy" className="h-full w-full object-cover" />
+      ) : (
+        <ImageOff className="h-4 w-4 text-text-muted" aria-hidden />
+      )}
+    </span>
+  );
+}
 
 export default function ProductsPage() {
   const { current } = useTenant();
@@ -79,19 +99,22 @@ export default function ProductsPage() {
       key: "name",
       header: t("name"),
       render: (p) => (
-        <span>
-          <RowPrimary>{getProductName(p, lang)}</RowPrimary>
-          <br />
-          <RowSecondary>
-            <span className="text-xs">
-              {p.sku ?? "—"}
-              {missingTranslationLangs("product", p.id).length > 0 && (
-                <span className="ms-1.5 rounded bg-warning-muted px-1 py-px text-[10px] font-medium text-warning">
-                  FR+
-                </span>
-              )}
-            </span>
-          </RowSecondary>
+        <span className="flex items-center gap-3">
+          <ProductThumb src={p.image} alt={getProductName(p, lang)} />
+          <span className="min-w-0">
+            <RowPrimary>{getProductName(p, lang)}</RowPrimary>
+            <br />
+            <RowSecondary>
+              <span className="text-xs">
+                {p.sku ?? "—"}
+                {missingTranslationLangs("product", p.id).length > 0 && (
+                  <span className="ms-1.5 rounded bg-warning-muted px-1 py-px text-[10px] font-medium text-warning">
+                    FR+
+                  </span>
+                )}
+              </span>
+            </RowSecondary>
+          </span>
         </span>
       ),
     },
