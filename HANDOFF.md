@@ -120,6 +120,19 @@ segment is not a real tenant (`a1000008-…`), so they cannot be filed.
    (+ `npm run verify:markdown` in central).
 8. **Git identity is unset in both repos.** Commits were made with
    `git -c user.name="ameur.gh" -c user.email="suqyahoney@gmail.com"`.
+9. **Concurrent edits are real in this repo** — the owner (or another agent) edits
+   the same files while a session runs. Staging a file wholesale therefore sweeps
+   up work you did not write: commit `48a1744` (variant management) also carried
+   the owner's `bulkSetProductsAvailability` / `bulkMoveProductsToCategory` /
+   `bulkDeleteProducts` services and the `bulk_*` i18n keys, because
+   `lib/services.ts` and `language-provider.tsx` were staged whole while those
+   edits sat in the tree. Nothing was lost and nothing was rewritten (history was
+   already pushed), but **before staging, run `git diff <file>` and check the hunks
+   are yours** — the staged line count will not tell you. Prefer staging paths you
+   created or hunks you wrote over whole files that others are editing.
+10. **The bulk product actions are half-landed**: services + i18n keys are in
+   `48a1744`; `app/(app)/products/page.tsx` and `components/patterns/data-table.tsx`
+   were still uncommitted at handoff time.
 9. **The PAT pasted in chat must be rotated** (it has push access to both repos).
    It was never written to disk, `.git/config`, or any commit — but it is in the
    transcript.
