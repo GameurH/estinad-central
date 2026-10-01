@@ -49,6 +49,8 @@ import type {
   Wilaya,
   Tenant,
   TenantStatus,
+  ContactInfo,
+  DayHours,
   Variant,
 } from "@/lib/domain";
 
@@ -215,6 +217,52 @@ function pickLangText(v: unknown): { fr: string; ar: string; en: string } {
   return out;
 }
 
+function emptyContact(): ContactInfo {
+  return {
+    email: "",
+    phone: "",
+    whatsapp: "",
+    website: "",
+    address: "",
+    instagram: "",
+    facebook: "",
+    tiktok: "",
+  };
+}
+
+function parseContact(raw: unknown): ContactInfo {
+  const c = emptyContact();
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const k of Object.keys(c) as (keyof ContactInfo)[]) {
+      if (typeof o[k] === "string") c[k] = o[k] as string;
+    }
+  }
+  return c;
+}
+
+/** Weekly hours: `tenants.operating_hours` jsonb, keyed "0".."6" (0 = Sunday).
+ *  Tolerant of arrays (index = day) and of per-day string values. */
+function parseOperatingHours(raw: unknown): Record<string, DayHours> {
+  const out: Record<string, DayHours> = {};
+  const pick = (i: number, v: unknown) => {
+    if (!v || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    const open = str(o.open);
+    const close = str(o.close);
+    if (!open && !close && o.closed === undefined) return;
+    const closed = o.closed === undefined ? !open && !close : bool(o.closed);
+    out[String(i)] = { open, close, closed };
+  };
+  if (Array.isArray(raw)) {
+    (raw as unknown[]).slice(0, 7).forEach((v, i) => pick(i, v));
+  } else if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (let i = 0; i < 7; i++) pick(i, o[String(i)]);
+  }
+  return out;
+}
+
 function mapTenant(r: Row): Tenant {
   const rawConfig =
     r.config && typeof r.config === "object" ? (r.config as Record<string, unknown>) : {};
@@ -259,6 +307,8 @@ function mapTenant(r: Row): Tenant {
     latitude: typeof r.restaurant_latitude === "number" ? (r.restaurant_latitude as number) : r.restaurant_latitude != null ? num(r.restaurant_latitude) : null,
     longitude: typeof r.restaurant_longitude === "number" ? (r.restaurant_longitude as number) : r.restaurant_longitude != null ? num(r.restaurant_longitude) : null,
     brand,
+    contact: parseContact(rawConfig.contact),
+    operatingHours: parseOperatingHours(r.operating_hours),
     createdAt: str(r.created_at),
   };
 }
@@ -2108,6 +2158,8 @@ export interface TenantSettingsInput {
   metaDescription: string;
   latitude: string;
   longitude: string;
+  contact: ContactInfo;
+  operatingHours: DayHours[]; // index 0 = Sunday … 6 = Saturday
 }
 
 export async function updateTenantSettings(
@@ -2141,6 +2193,30 @@ export async function updateTenantSettings(
     metaDescription: mergeLang(brandRaw.metaDescription, s.metaDescription),
   };
 
+  // Storefront contact block: keep unknown extra keys, overwrite the known
+  // ones. Keys here MUST match what the storefront reads
+  // (`tenant.config.contact`) — see components/layout/footer.tsx and
+  // components/business/honey/honey-footer.tsx in suqya-new-store.
+  const contactRaw =
+    config.contact && typeof config.contact === "object"
+      ? { ...(config.contact as Record<string, unknown>) }
+      : {};
+  const trimmed = (v: string) => v.trim();
+  config.contact = {
+    ...contactRaw,
+    email: trimmed(s.contact.email),
+    phone: trimmed(s.contact.phone),
+    whatsapp: trimmed(s.contact.whatsapp),
+    website: trimmed(s.contact.website),
+    address: trimmed(s.contact.address),
+    instagram: trimmed(s.contact.instagram),
+    facebook: trimmed(s.contact.facebook),
+    tiktok: trimmed(s.contact.tiktok),
+  };
+
+  const operatingHours: Record<string, DayHours> = {};
+  s.operatingHours.forEach((d, i) => operatingHours[String(i)] = d);
+
   const toNum = (v: string): number | null => {
     const t = v.trim();
     if (t === "") return null;
@@ -2168,6 +2244,7 @@ export async function updateTenantSettings(
       storefront_description: s.storefrontDescription.trim() || null,
       restaurant_latitude: toNum(s.latitude),
       restaurant_longitude: toNum(s.longitude),
+      operating_hours: operatingHours,
       config,
     })
     .eq("id", id);

@@ -12,9 +12,10 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Field, Input, Switch, Textarea } from "@/components/ui/fields";
 import { Skeleton } from "@/components/ui/skeleton";
 import { updateTenantSettings } from "@/lib/services";
+import type { ContactInfo, DayHours } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
-type Tab = "general" | "ordering" | "storefront" | "branding" | "location";
+type Tab = "general" | "ordering" | "storefront" | "branding" | "location" | "contact";
 interface BusinessDraft {
   name: string;
   businessName: string;
@@ -36,7 +37,17 @@ interface BusinessDraft {
   metaDescription: string;
   latitude: string;
   longitude: string;
+  /** Storefront-facing contact — mirrors `ContactInfo` in lib/domain.ts. */
+  contact: ContactInfo;
+  /** Weekly hours, index 0 = Sunday. */
+  operatingHours: DayHours[];
 }
+
+const DEFAULT_HOURS: DayHours[] = Array.from({ length: 7 }, () => ({
+  open: "09:00",
+  close: "18:00",
+  closed: true,
+}));
 
 type BooleanKeys = {
   [K in keyof BusinessDraft]: BusinessDraft[K] extends boolean ? K : never;
@@ -97,6 +108,19 @@ export default function BusinessSettingsPage() {
       metaDescription: current.brand.metaDescription.fr,
       latitude: current.latitude?.toString() ?? "",
       longitude: current.longitude?.toString() ?? "",
+      contact: current.contact ?? {
+        email: "",
+        phone: "",
+        whatsapp: "",
+        website: "",
+        address: "",
+        instagram: "",
+        facebook: "",
+        tiktok: "",
+      },
+      operatingHours: Array.from({ length: 7 }, (_, i) =>
+        current.operatingHours?.[String(i)] ?? DEFAULT_HOURS[i],
+      ),
     };
     setDraft(d);
     setInitial(d);
@@ -139,6 +163,7 @@ export default function BusinessSettingsPage() {
     { id: "storefront", label: t("storefront") },
     { id: "branding", label: t("branding") },
     { id: "location", label: t("location") },
+    { id: "contact", label: t("contact_tab") },
   ];
 
   const bool = <K extends BooleanKeys>(key: K) => ({
@@ -269,6 +294,81 @@ export default function BusinessSettingsPage() {
             </Field>
           </div>
         </Card>
+      )}
+
+      {tab === "contact" && (
+        <>
+          <Card className="animate-fade-in">
+            <CardHeader title={t("contact_tab")} subtitle={t("contact_public_hint")} />
+            <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+              <Field label={t("public_email")}>
+                <Input type="email" value={draft.contact.email} onChange={(e) => set("contact", { ...draft.contact, email: e.target.value })} inputMode="email" />
+              </Field>
+              <Field label={t("public_phone")}>
+                <Input value={draft.contact.phone} onChange={(e) => set("contact", { ...draft.contact, phone: e.target.value })} inputMode="tel" />
+              </Field>
+              <Field label={t("whatsapp")} hint={t("whatsapp_hint")}>
+                <Input value={draft.contact.whatsapp} onChange={(e) => set("contact", { ...draft.contact, whatsapp: e.target.value })} inputMode="tel" />
+              </Field>
+              <Field label={t("website")}>
+                <Input value={draft.contact.website} onChange={(e) => set("contact", { ...draft.contact, website: e.target.value })} inputMode="url" className="font-mono" />
+              </Field>
+              <Field label={t("public_address")} className="sm:col-span-2" hint={t("contact_address_hint")}>
+                <Input value={draft.contact.address} onChange={(e) => set("contact", { ...draft.contact, address: e.target.value })} />
+              </Field>
+              <Field label={t("instagram")}>
+                <Input value={draft.contact.instagram} onChange={(e) => set("contact", { ...draft.contact, instagram: e.target.value })} className="font-mono" />
+              </Field>
+              <Field label={t("facebook")}>
+                <Input value={draft.contact.facebook} onChange={(e) => set("contact", { ...draft.contact, facebook: e.target.value })} className="font-mono" />
+              </Field>
+              <Field label={t("tiktok")}>
+                <Input value={draft.contact.tiktok} onChange={(e) => set("contact", { ...draft.contact, tiktok: e.target.value })} className="font-mono" />
+              </Field>
+            </div>
+          </Card>
+          <Card className="animate-fade-in">
+            <CardHeader title={t("business_hours")} subtitle={t("business_hours_hint")} />
+            <div className="divide-y divide-[var(--border)] px-4">
+              {draft.operatingHours.map((h, i) => (
+                <div key={i} className="grid grid-cols-1 items-center gap-2 py-2.5 sm:grid-cols-[1fr_auto_auto_auto] sm:gap-3">
+                  <p className="text-[13px] font-medium text-text-primary">{t(`day_${i}`)}</p>
+                  <label className="flex items-center gap-2 text-xs text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={h.closed}
+                      onChange={(e) =>
+                        set("operatingHours", draft.operatingHours.map((x, j) =>
+                          j === i ? { ...x, closed: e.target.checked } : x,
+                        ))
+                      }
+                      className="h-4 w-4 accent-[var(--primary)]"
+                    />
+                    {t("hours_closed")}
+                  </label>
+                  <Input
+                    type="time"
+                    value={h.open}
+                    disabled={h.closed}
+                    onChange={(e) =>
+                      set("operatingHours", draft.operatingHours.map((x, j) => (j === i ? { ...x, open: e.target.value } : x)))
+                    }
+                    className="w-28"
+                  />
+                  <Input
+                    type="time"
+                    value={h.close}
+                    disabled={h.closed}
+                    onChange={(e) =>
+                      set("operatingHours", draft.operatingHours.map((x, j) => (j === i ? { ...x, close: e.target.value } : x)))
+                    }
+                    className="w-28"
+                  />
+                </div>
+              ))}
+            </div>
+          </Card>
+        </>
       )}
 
       {dirty && (

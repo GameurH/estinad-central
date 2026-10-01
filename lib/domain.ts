@@ -35,7 +35,31 @@ export interface Tenant {
   latitude: number | null;
   longitude: number | null;
   brand: BrandConfig;
+  /** Storefront-facing contact block (`tenants.config.contact`). The
+   *  storefront footer reads `tenant.config.contact.{email,phone,whatsapp,
+   *  address,instagram,facebook}` — these exact keys, never rename them. */
+  contact: ContactInfo;
+  /** Weekly opening hours from `tenants.operating_hours`, keyed by day index
+   *  ("0" = Sunday … "6" = Saturday). Absent keys mean "closed". */
+  operatingHours: Record<string, DayHours>;
   createdAt: string;
+}
+
+export interface ContactInfo {
+  email: string;
+  phone: string;
+  whatsapp: string;
+  website: string;
+  address: string;
+  instagram: string;
+  facebook: string;
+  tiktok: string;
+}
+
+export interface DayHours {
+  open: string;
+  close: string;
+  closed: boolean;
 }
 
 export interface BrandConfig {
