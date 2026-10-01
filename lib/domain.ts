@@ -361,6 +361,63 @@ export interface HeroImages {
   alt: { fr: string; ar: string; en: string };
 }
 
+/* ---------- Shipping & geography ---------- */
+
+/** Algerian wilaya (static table `wilayas`, 58 rows, not tenant-scoped). */
+export interface Wilaya {
+  code: number;
+  nameFr: string;
+  nameAr: string;
+  /** Empty in the live table for most rows. */
+  nameEn: string;
+  isActive: boolean;
+}
+
+/** Commune of a wilaya (`communes`, public read only, no tenant scope). */
+export interface Commune {
+  id: string;
+  wilayaCode: number;
+  nameFr: string;
+  nameAr: string;
+}
+
+/** `shipping_methods.type` — how the parcel reaches the customer. */
+export type ShippingMethodType = "home" | "desk" | "pickup";
+
+export interface ShippingMethod {
+  id: string;
+  tenantId: string;
+  code: string;
+  nameFr: string;
+  nameAr: string;
+  nameEn: string;
+  descriptionFr: string;
+  type: ShippingMethodType;
+  provider: string;
+  basePrice: number;
+  freeOverThreshold: number | null;
+  estimatedDaysMin: number | null;
+  estimatedDaysMax: number | null;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/**
+ * One wilaya × method rate in `delivery_zones`. Only the pricing columns are
+ * managed here; the storefront-facing extras (name, polygon, postal codes…)
+ * keep their stored values.
+ */
+export interface DeliveryZone {
+  id: string;
+  tenantId: string;
+  wilayaCode: number;
+  methodCode: string;
+  deliveryFee: number;
+  freeOverThreshold: number | null;
+  minimumOrder: number | null;
+  isActive: boolean;
+}
+
 export interface HeroSection {
   tenantId: string;
   fr: Omit<HeroContent, "primaryHref" | "secondaryHref"> & {

@@ -11,6 +11,7 @@ import {
   Images,
   FileBarChart,
   Settings,
+  Truck,
   LogOut,
   Home,
 } from "lucide-react";
@@ -26,6 +27,7 @@ const ITEMS = [
   { key: "categories", href: "/categories", icon: FolderTree },
   { key: "media_library", href: "/media", icon: Images },
   { key: "hero_editor", href: "/home", icon: Home },
+  { key: "shipping", href: "/shipping", icon: Truck },
   { key: "reports", href: "/reports", icon: FileBarChart },
   { key: "settings", href: "/settings", icon: Settings },
 ] as const;

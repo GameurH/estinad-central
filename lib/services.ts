@@ -42,6 +42,11 @@ import type {
   MediaAsset,
   ProductTranslation,
   ShippingStatus,
+  ShippingMethodType,
+  ShippingMethod,
+  Commune,
+  DeliveryZone,
+  Wilaya,
   Tenant,
   TenantStatus,
   Variant,
@@ -2272,6 +2277,309 @@ export async function saveHeroSection(
   const row = oneOf(data);
   if (!row) throw new Error("save hero section: no row returned");
   return mapHeroSection(row);
+}
+
+/* ---------- Shipping & geography ---------- */
+
+const METHOD_TYPES: ShippingMethodType[] = ["home", "desk", "pickup"];
+
+function asMethodType(v: unknown): ShippingMethodType {
+  return METHOD_TYPES.includes(v as ShippingMethodType)
+    ? (v as ShippingMethodType)
+    : "home";
+}
+
+function mapShippingMethod(r: Row): ShippingMethod {
+  return {
+    id: str(r.id),
+    tenantId: str(r.tenant_id),
+    code: str(r.code),
+    nameFr: str(r.name_fr),
+    nameAr: str(r.name_ar),
+    nameEn: str(r.name_en),
+    descriptionFr: str(r.description_fr),
+    type: asMethodType(r.type),
+    provider: str(r.provider),
+    basePrice: num(r.base_price),
+    freeOverThreshold: r.free_over_threshold == null ? null : num(r.free_over_threshold),
+    estimatedDaysMin: r.estimated_days_min == null ? null : num(r.estimated_days_min),
+    estimatedDaysMax: r.estimated_days_max == null ? null : num(r.estimated_days_max),
+    isActive: r.is_active == null ? true : bool(r.is_active, true),
+    sortOrder: num(r.sort_order),
+  };
+}
+
+/** The 58 Algerian wilayas, ordered by code. Static data — all tenants share it. */
+export async function getWilayas(): Promise<Wilaya[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("wilayas").select("*").order("code");
+  if (error) fail("load wilayas", error);
+  return rowsOf(data).map((r) => ({
+    code: num(r.code),
+    nameFr: str(r.name_fr),
+    nameAr: str(r.name_ar),
+    nameEn: str(r.name_en),
+    isActive: r.is_active == null ? true : bool(r.is_active, true),
+  }));
+}
+
+/** Communes of one wilaya, ordered by `name_fr`. Public read, no tenant scope. */
+export async function getCommunes(wilayaCode: number): Promise<Commune[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("communes")
+    .select("id,wilaya_code,name_fr,name_ar")
+    .eq("wilaya_code", wilayaCode)
+    .order("name_fr");
+  if (error) fail("load communes", error);
+  return rowsOf(data).map((r) => ({
+    id: str(r.id),
+    wilayaCode: num(r.wilaya_code),
+    nameFr: str(r.name_fr),
+    nameAr: str(r.name_ar),
+  }));
+}
+
+export async function getShippingMethods(tenantId: string): Promise<ShippingMethod[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shipping_methods")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("sort_order");
+  if (error) fail("load shipping methods", error);
+  return rowsOf(data).map(mapShippingMethod);
+}
+
+export interface ShippingMethodInput {
+  tenantId: string;
+  code: string;
+  nameFr: string;
+  nameAr: string | null;
+  nameEn: string | null;
+  descriptionFr: string | null;
+  type: ShippingMethodType;
+  provider: string | null;
+  basePrice: number;
+  freeOverThreshold: number | null;
+  estimatedDaysMin: number | null;
+  estimatedDaysMax: number | null;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export async function createShippingMethod(input: ShippingMethodInput): Promise<string> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shipping_methods")
+    .insert({
+      tenant_id: input.tenantId,
+      code: input.code.trim(),
+      name_fr: input.nameFr.trim(),
+      name_ar: input.nameAr?.trim() || null,
+      name_en: input.nameEn?.trim() || null,
+      description_fr: input.descriptionFr?.trim() || null,
+      type: input.type,
+      provider: input.provider?.trim() || null,
+      base_price: input.basePrice,
+      free_over_threshold: input.freeOverThreshold,
+      estimated_days_min: input.estimatedDaysMin,
+      estimated_days_max: input.estimatedDaysMax,
+      is_active: input.isActive,
+      sort_order: input.sortOrder,
+    })
+    .select("id")
+    .single();
+  if (error) fail("create shipping method", error);
+  return str(oneOf(data)?.id);
+}
+
+export async function updateShippingMethod(
+  id: string,
+  patch: Partial<Omit<ShippingMethodInput, "tenantId">>,
+): Promise<void> {
+  const sb = getSupabase();
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.code !== undefined) row.code = patch.code.trim();
+  if (patch.nameFr !== undefined) row.name_fr = patch.nameFr.trim();
+  if (patch.nameAr !== undefined) row.name_ar = patch.nameAr?.trim() || null;
+  if (patch.nameEn !== undefined) row.name_en = patch.nameEn?.trim() || null;
+  if (patch.descriptionFr !== undefined)
+    row.description_fr = patch.descriptionFr?.trim() || null;
+  if (patch.type !== undefined) row.type = patch.type;
+  if (patch.provider !== undefined) row.provider = patch.provider?.trim() || null;
+  if (patch.basePrice !== undefined) row.base_price = patch.basePrice;
+  if (patch.freeOverThreshold !== undefined)
+    row.free_over_threshold = patch.freeOverThreshold;
+  if (patch.estimatedDaysMin !== undefined) row.estimated_days_min = patch.estimatedDaysMin;
+  if (patch.estimatedDaysMax !== undefined) row.estimated_days_max = patch.estimatedDaysMax;
+  if (patch.isActive !== undefined) row.is_active = patch.isActive;
+  if (patch.sortOrder !== undefined) row.sort_order = patch.sortOrder;
+  const { error } = await sb.from("shipping_methods").update(row).eq("id", id);
+  if (error) fail("update shipping method", error);
+}
+
+export async function deleteShippingMethod(id: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("shipping_methods").delete().eq("id", id);
+  if (error) {
+    if (String((error as { code?: string }).code) === "23503") {
+      throw new Error("shipping method is still referenced and cannot be deleted");
+    }
+    fail("delete shipping method", error);
+  }
+}
+
+/**
+ * Reorders methods by rewriting the full `sort_order` sequence — the up/down
+ * buttons swap two neighbours, then the caller persists every id in order.
+ */
+export async function reorderShippingMethods(
+  tenantId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const sb = getSupabase();
+  await Promise.all(
+    orderedIds.map(async (id, index) => {
+      const { error } = await sb
+        .from("shipping_methods")
+        .update({ sort_order: index, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("tenant_id", tenantId);
+      if (error) fail("reorder shipping methods", error);
+    }),
+  );
+}
+
+function mapDeliveryZone(r: Row): DeliveryZone {
+  return {
+    id: str(r.id),
+    tenantId: str(r.tenant_id),
+    wilayaCode: num(r.wilaya_code),
+    methodCode: str(r.method_code),
+    deliveryFee: num(r.delivery_fee),
+    freeOverThreshold: r.free_delivery_threshold == null ? null : num(r.free_delivery_threshold),
+    minimumOrder: r.minimum_order == null ? null : num(r.minimum_order),
+    isActive: r.is_active == null ? true : bool(r.is_active, true),
+  };
+}
+
+export async function getDeliveryZones(tenantId: string): Promise<DeliveryZone[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("delivery_zones")
+    .select("id,tenant_id,wilaya_code,method_code,delivery_fee,minimum_order,free_delivery_threshold,is_active")
+    .eq("tenant_id", tenantId);
+  if (error) fail("load delivery zones", error);
+  return rowsOf(data).map(mapDeliveryZone);
+}
+
+export interface DeliveryZoneInput {
+  tenantId: string;
+  wilayaCode: number;
+  methodCode: string;
+  deliveryFee: number;
+  freeOverThreshold: number | null;
+  minimumOrder: number | null;
+  isActive: boolean;
+}
+
+/**
+ * Upserts one (tenant, wilaya, method) rate.
+ *
+ * `delivery_zones` has no unique constraint on the triple, so instead of a
+ * plain `upsert` the existing row id is read first and the write is an update
+ * or an insert. `name` is NOT NULL → the wilaya's `name_fr` fills it
+ * (`wilaya`/`wilaya_code`/`method_code` are also kept in sync — the legacy
+ * columns predate the code pair and other consumers still read them).
+ * `tenant_id` is uuid here while the rest of the app keeps text; the uuid
+ * string compares fine.
+ */
+export async function upsertDeliveryZone(input: DeliveryZoneInput): Promise<void> {
+  const sb = getSupabase();
+  const { data: wData, error: wErr } = await sb
+    .from("wilayas")
+    .select("name_fr")
+    .eq("code", input.wilayaCode)
+    .maybeSingle();
+  if (wErr) fail("load wilaya", wErr);
+  const name = str(oneOf(wData)?.name_fr) || `Wilaya ${input.wilayaCode}`;
+
+  // Limit the lookup to the tenant: ids from another tenant are other rows in
+  // this shared table and must never be updated by this call.
+  const { data: zData, error: zErr } = await sb
+    .from("delivery_zones")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("wilaya_code", input.wilayaCode)
+    .eq("method_code", input.methodCode);
+  if (zErr) fail("load delivery zone", zErr);
+  const existing = oneOf(zData);
+
+  const payload = {
+    delivery_fee: input.deliveryFee,
+    free_delivery_threshold: input.freeOverThreshold,
+    minimum_order: input.minimumOrder,
+    is_active: input.isActive,
+    wilaya: name,
+    wilaya_code: input.wilayaCode,
+    method_code: input.methodCode,
+  };
+
+  if (existing) {
+    const { error } = await sb
+      .from("delivery_zones")
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq("id", str(existing.id))
+      .eq("tenant_id", input.tenantId);
+    if (error) fail("update delivery zone", error);
+    return;
+  }
+
+  const { error } = await sb.from("delivery_zones").insert({
+    tenant_id: input.tenantId,
+    name,
+    ...payload,
+  });
+  if (error) fail("create delivery zone", error);
+}
+
+/** Bulk-applies one fee/active pair to every wilaya via the same triple upsert. */
+export async function applyDeliveryFeeToAllWilayas(input: {
+  tenantId: string;
+  methodCode: string;
+  deliveryFee: number;
+}): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("wilayas").select("code").order("code");
+  if (error) fail("load wilayas", error);
+  const codes = rowsOf(data).map((r) => num(r.code));
+
+  // The optional columns are not part of the bulk fee — rows that already
+  // exist keep their stored free-over/minimum/active values.
+  const { data: zData, error: zErr } = await sb
+    .from("delivery_zones")
+    .select("wilaya_code,free_delivery_threshold,minimum_order,is_active")
+    .eq("tenant_id", input.tenantId)
+    .eq("method_code", input.methodCode);
+  if (zErr) fail("load delivery zones", zErr);
+  const existing = new Map(
+    rowsOf(zData).map((r) => [num(r.wilaya_code), r]),
+  );
+
+  for (const wilayaCode of codes) {
+    const zone = existing.get(wilayaCode);
+    await upsertDeliveryZone({
+      tenantId: input.tenantId,
+      wilayaCode,
+      methodCode: input.methodCode,
+      deliveryFee: input.deliveryFee,
+      freeOverThreshold:
+        zone && zone.free_delivery_threshold != null ? num(zone.free_delivery_threshold) : null,
+      minimumOrder: zone && zone.minimum_order != null ? num(zone.minimum_order) : null,
+      isActive: zone ? bool(zone.is_active, true) : true,
+    });
+  }
 }
 
 /* ---------- CSV export ---------- */
