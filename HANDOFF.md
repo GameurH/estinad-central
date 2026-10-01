@@ -182,6 +182,34 @@ duplicate variant names: **18** groups.
 
 ## 8. Open work, in priority order
 
+**Shipping & geography (phases 1-3 of the approved plan) — SCHEMA LANDED, UI NOT BUILT.**
+Migration `create_shipping_geography` applied:
+
+- `wilayas` (58 rows) + `communes` (1541 rows, 58 wilaya codes) — **seeded and verified**,
+  public SELECT only, populated by migration. Source dataset:
+  `othmanus/algeria-cities` `json/algeria_cities.json` (fr-ascii + Arabic; no `name_en`).
+  Note: there is no commune literally named `Alger` — the wilaya's communes start at
+  `Alger Centre`, which is correct against the source.
+- `shipping_methods` (tenant-scoped: `code`, `name_fr/ar/en`, `type` home|desk|pickup,
+  `provider`, `base_price`, `free_over_threshold`, `estimated_days_*`, `is_active`,
+  `sort_order`) — **table is EMPTY**. RLS: public reads active rows, tenant owners manage.
+  The storefront still hardcodes `[{yalidine,500},{pickup,300}]` in BOTH checkout clients.
+- `delivery_zones` gained `wilaya_code` + `method_code` + index. The 6 existing rows belong to
+  other tenants (`08c8122e…`, `eba3f888…`) and were **not** backfilled from their `wilaya` text.
+
+Still to do for this feature:
+1. Seed `shipping_methods` for the live tenant (`a1b2c3d4-…`) from the hardcoded pair.
+2. Central UI: a **Livraison** tab — methods CRUD + a wilaya × (domicile, bureau, actif) rate grid.
+3. Storefront: read wilayas/communes/methods from these tables, **store a `wilaya_code`** on
+   `online_orders` (additive columns + backfill of `Alger`/`الجزائر`/`Sétif`/`البليدة`/`عنابة`),
+   and compute the fee from the zone instead of the flat 500/300. Replace the 10-entry i18n
+   wilaya array in `messages/*.json`.
+4. Phase 4 (not started): storefront-facing **contact info** (WhatsApp/Instagram the honey footer
+   already renders, public email/phone, hours from the existing `operating_hours` jsonb) with a
+   Contact tab in central settings.
+5. `pg_net` / `http` are available but NOT installed — enabling one would let the DB pull external
+   data (e.g. carrier rates). Infrastructure decision, needs the owner's call.
+
 **P0 — the storefront ignores variants (revenue bug, not a UI gap).**
 `components/business/honey/product-details.tsx` (the live tenant) calls
 `addItem({id, name, price: product.price, image})` with **no variant**, so every
