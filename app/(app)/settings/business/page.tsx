@@ -228,6 +228,39 @@ export default function BusinessSettingsPage() {
         </Card>
       )}
 
+      {tab === "general" && current && (
+        /* Sales channel is owned by provisioning, not by this form: a tenant
+           becomes hybrid when a POS host is enrolled, and flipping it here
+           would silently change which sales source the dashboard counts. */
+        <Card className="animate-fade-in">
+          <CardHeader
+            title="Canal de vente"
+            subtitle="Défini par le provisionnement — non modifiable ici"
+          />
+          <div className="space-y-3 p-4">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+                  current.salesChannel === "hybrid"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-[var(--surface-2)] text-[var(--text-muted)]",
+                )}
+              >
+                {current.salesChannel === "hybrid"
+                  ? "Hybride — boutique en ligne + caisse"
+                  : "En ligne uniquement"}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--text-muted)]">
+              {current.salesChannel === "hybrid"
+                ? "Vos ventes en caisse remontent par synchronisation depuis votre poste de vente. Le catalogue est géré par la caisse : les modifications faites ici ne sont pas prioritaires."
+                : "Aucune caisse physique : ce tableau de bord est la source des produits et des ventes en ligne."}
+            </p>
+          </div>
+        </Card>
+      )}
+
       {tab === "ordering" && (
         <Card className="animate-fade-in">
           <CardHeader title={t("ordering")} />

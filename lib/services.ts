@@ -293,6 +293,8 @@ function mapTenant(r: Row): Tenant {
     ownerEmail: strOrNull(r.owner_email),
     ownerPhone: strOrNull(r.owner_phone),
     trialEndsAt: strOrNull(r.trial_ends_at),
+    salesChannel:
+      str(r.sales_channel) === "hybrid" ? "hybrid" : "online_only",
     storefrontEnabled: bool(r.storefront_enabled),
     storefrontSlug: strOrNull(r.storefront_slug),
     storefrontDescription: strOrNull(r.storefront_description),

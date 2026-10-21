@@ -10,11 +10,20 @@
 export type TenantStatus = "trial" | "active" | "suspended" | "cancelled";
 export type TenantRole = "owner" | "manager" | "viewer";
 
+/**
+ * Which sales channels a tenant runs.
+ *
+ * online_only = storefront only, no POS host, so central owns the catalog.
+ * hybrid      = storefront plus a physical POS whose sales arrive via sync.
+ */
+export type SalesChannel = "online_only" | "hybrid";
+
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
+  salesChannel: SalesChannel;
   businessName: string | null;
   businessAddress: string | null;
   businessType: string | null;
