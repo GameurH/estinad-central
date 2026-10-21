@@ -46,6 +46,7 @@ import type {
   ShippingMethod,
   Commune,
   DeliveryZone,
+  ShippingCoverage,
   Wilaya,
   Tenant,
   TenantStatus,
@@ -2658,6 +2659,77 @@ export async function applyDeliveryFeeToAllWilayas(input: {
       isActive: zone ? bool(zone.is_active, true) : true,
     });
   }
+}
+
+/* ---------- Wilaya delivery coverage ---------- */
+
+function mapShippingCoverage(r: Row): ShippingCoverage {
+  return {
+    id: str(r.id),
+    tenantId: str(r.tenant_id),
+    wilayaCode: num(r.wilaya_code),
+    isActive: r.is_active == null ? true : bool(r.is_active, true),
+  };
+}
+
+/**
+ * The tenant's wilaya coverage rows. Owner-visible, so this includes the
+ * hidden ones (`isActive: false`); wilayas absent from the list are
+ * deliverable by the "no coverage row" rule.
+ */
+export async function getShippingCoverage(tenantId: string): Promise<ShippingCoverage[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shipping_coverage")
+    .select("id,tenant_id,wilaya_code,is_active")
+    .eq("tenant_id", tenantId);
+  if (error) fail("load shipping coverage", error);
+  return rowsOf(data).map(mapShippingCoverage);
+}
+
+export interface ShippingCoverageInput {
+  tenantId: string;
+  wilayaCode: number;
+  isActive: boolean;
+}
+
+/** Upserts one wilaya's coverage on the unique `(tenant_id, wilaya_code)` key. */
+export async function setWilayaCoverage(input: ShippingCoverageInput): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("shipping_coverage")
+    .upsert(
+      {
+        tenant_id: input.tenantId,
+        wilaya_code: input.wilayaCode,
+        is_active: input.isActive,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "tenant_id,wilaya_code" },
+    );
+  if (error) fail("save shipping coverage", error);
+}
+
+/** Upserts a set of wilaya coverages in a single statement. */
+export async function setCoverageBulk(input: {
+  tenantId: string;
+  wilayaCodes: number[];
+  isActive: boolean;
+}): Promise<void> {
+  if (input.wilayaCodes.length === 0) return;
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("shipping_coverage")
+    .upsert(
+      input.wilayaCodes.map((wilayaCode) => ({
+        tenant_id: input.tenantId,
+        wilaya_code: wilayaCode,
+        is_active: input.isActive,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: "tenant_id,wilaya_code" },
+    );
+  if (error) fail("save shipping coverage", error);
 }
 
 /* ---------- CSV export ---------- */

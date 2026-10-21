@@ -478,6 +478,18 @@ export interface DeliveryZone {
   isActive: boolean;
 }
 
+/**
+ * Tenant-level delivery coverage (`shipping_coverage`). No row for a
+ * (tenant, wilaya) pair means the wilaya is deliverable; a row with
+ * `is_active = false` hides it from the storefront checkout.
+ */
+export interface ShippingCoverage {
+  id: string;
+  tenantId: string;
+  wilayaCode: number;
+  isActive: boolean;
+}
+
 export interface HeroSection {
   tenantId: string;
   fr: Omit<HeroContent, "primaryHref" | "secondaryHref"> & {
