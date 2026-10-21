@@ -12,7 +12,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Field, Input, Switch, Textarea } from "@/components/ui/fields";
 import { Skeleton } from "@/components/ui/skeleton";
 import { updateTenantSettings } from "@/lib/services";
-import type { ContactInfo, DayHours } from "@/lib/domain";
+import type { ChannelState, ContactInfo, DayHours } from "@/lib/domain";
+import { channelStateOf } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
 type Tab = "general" | "ordering" | "storefront" | "branding" | "location" | "contact";
@@ -75,9 +76,33 @@ function ToggleRow({
   );
 }
 
+/**
+ * Channel copy. Kept next to the page because it is presentation only;
+ * the state itself comes from channelStateOf() and ultimately from
+ * pos_enabled + storefront_enabled.
+ */
+const CHANNEL_LABEL: Record<ChannelState, string> = {
+  hybrid: "Hybride — caisse + boutique en ligne",
+  in_store_only: "Caisse uniquement",
+  online_only: "En ligne uniquement",
+  unconfigured: "Aucun canal configuré",
+};
+
+const CHANNEL_HINT: Record<ChannelState, string> = {
+  hybrid:
+    "Vos ventes en caisse remontent par synchronisation. Le catalogue est géré par la caisse : les modifications faites ici ne sont pas prioritaires.",
+  in_store_only:
+    "Vous vendez en caisse uniquement. Activez la boutique en ligne pour vendre aussi sur le web.",
+  online_only:
+    "Aucune caisse physique : ce tableau de bord est la source des produits et des ventes en ligne.",
+  unconfigured:
+    "Aucun canal n'est encore actif. Activez la caisse ou la boutique en ligne pour commencer à vendre.",
+};
+
 export default function BusinessSettingsPage() {
   const router = useRouter();
   const { current } = useTenant();
+  const channel = current ? channelStateOf(current) : "unconfigured";
   const { t } = useLanguage();
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("general");
@@ -229,9 +254,9 @@ export default function BusinessSettingsPage() {
       )}
 
       {tab === "general" && current && (
-        /* Sales channel is owned by provisioning, not by this form: a tenant
-           becomes hybrid when a POS host is enrolled, and flipping it here
-           would silently change which sales source the dashboard counts. */
+        /* The channel is derived from posEnabled + storefrontEnabled and is
+           set by provisioning, never by this form: flipping it here would
+           silently change which sales source the dashboard counts. */
         <Card className="animate-fade-in">
           <CardHeader
             title="Canal de vente"
@@ -242,20 +267,16 @@ export default function BusinessSettingsPage() {
               <span
                 className={cn(
                   "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-                  current.salesChannel === "hybrid"
-                    ? "bg-primary/10 text-primary"
-                    : "bg-[var(--surface-2)] text-[var(--text-muted)]",
+                  channel === "unconfigured"
+                    ? "bg-[var(--warning-bg,var(--surface-2))] text-[var(--text-muted)]"
+                    : "bg-primary/10 text-primary",
                 )}
               >
-                {current.salesChannel === "hybrid"
-                  ? "Hybride — boutique en ligne + caisse"
-                  : "En ligne uniquement"}
+                {CHANNEL_LABEL[channel]}
               </span>
             </div>
             <p className="text-xs text-[var(--text-muted)]">
-              {current.salesChannel === "hybrid"
-                ? "Vos ventes en caisse remontent par synchronisation depuis votre poste de vente. Le catalogue est géré par la caisse : les modifications faites ici ne sont pas prioritaires."
-                : "Aucune caisse physique : ce tableau de bord est la source des produits et des ventes en ligne."}
+              {CHANNEL_HINT[channel]}
             </p>
           </div>
         </Card>

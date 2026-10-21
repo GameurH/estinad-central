@@ -13,17 +13,44 @@ export type TenantRole = "owner" | "manager" | "viewer";
 /**
  * Which sales channels a tenant runs.
  *
- * online_only = storefront only, no POS host, so central owns the catalog.
- * hybrid      = storefront plus a physical POS whose sales arrive via sync.
+ * Derived from two independent flags rather than stored, so the label can
+ * never disagree with reality: a till-only business must not be described
+ * as having an online store.
+ *
+ * in_store_only = physical till, no storefront.
+ * online_only   = storefront, no till.
+ * hybrid        = both.
+ * unconfigured  = neither yet (onboarding).
  */
-export type SalesChannel = "online_only" | "hybrid";
+export type ChannelState =
+  | "hybrid"
+  | "in_store_only"
+  | "online_only"
+  | "unconfigured";
+
+/**
+ * Single implementation of the channel rule.
+ *
+ * Mirrors `v_tenant_channels` in the database (see
+ * supabase/migrations/20261025_tenant_channels.sql); keep the two in step.
+ */
+export function channelStateOf(t: {
+  posEnabled: boolean;
+  storefrontEnabled: boolean;
+}): ChannelState {
+  if (t.posEnabled && t.storefrontEnabled) return "hybrid";
+  if (t.posEnabled) return "in_store_only";
+  if (t.storefrontEnabled) return "online_only";
+  return "unconfigured";
+}
 
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
-  salesChannel: SalesChannel;
+  /** This business operates a physical till (commercial intent). */
+  posEnabled: boolean;
   businessName: string | null;
   businessAddress: string | null;
   businessType: string | null;
